@@ -299,6 +299,10 @@ class NodeEventEmitter {
   listenerCount(event) {
     return this.listeners(event).length;
   }
+  eventNames() {
+    if (!this._events) return [];
+    return Reflect.ownKeys(this._events);
+  }
 }
 globalThis.__nodeEventEmitter = NodeEventEmitter;
 globalThis.process._events = Object.create(null);
