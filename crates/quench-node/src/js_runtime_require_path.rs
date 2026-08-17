@@ -103,6 +103,10 @@ fn path_module() -> Value {
                     )),
                 ),
                 (
+                    "join".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinJoin)),
+                ),
+                (
                     "parse".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinParse)),
                 ),

@@ -666,13 +666,72 @@ fn path_relative(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::String(result.join("/")))
 }
 
-fn path_join(arguments: &[Value]) -> Result<Value, VmError> {
-    let mut path = PathBuf::new();
+fn join_path_args(arguments: &[Value]) -> Result<Vec<&str>, VmError> {
+    let mut parts = Vec::new();
     for argument in arguments {
-        path.push(path_arg(std::slice::from_ref(argument), 0)?);
+        let part = path_arg(std::slice::from_ref(argument), 0)?;
+        if !part.is_empty() {
+            parts.push(part);
+        }
     }
-    let joined = Value::String(path.to_string_lossy().into_owned().into());
-    path_normalize(&[joined], false)
+    Ok(parts)
+}
+
+fn path_join(arguments: &[Value]) -> Result<Value, VmError> {
+    let parts = join_path_args(arguments)?;
+    if parts.is_empty() {
+        return Ok(Value::String(".".into()));
+    }
+    Ok(Value::String(posix_normalize(&parts.join("/")).into()))
+}
+
+fn path_win_join(arguments: &[Value]) -> Result<Value, VmError> {
+    let parts = join_path_args(arguments)?;
+    if parts.is_empty() {
+        return Ok(Value::String(".".into()));
+    }
+    let first_part = parts[0];
+    let mut joined = parts.join("\\");
+    let first_bytes = first_part.as_bytes();
+
+    // Make sure the joined path does not start with two slashes, unless the
+    // first part clearly was intended as a UNC server name.
+    let mut needs_replace = true;
+    let mut slash_count = 0usize;
+    if is_windows_path_separator(first_bytes[0]) {
+        slash_count += 1;
+        let first_len = first_bytes.len();
+        if first_len > 1 && is_windows_path_separator(first_bytes[1]) {
+            slash_count += 1;
+            if first_len > 2 {
+                if is_windows_path_separator(first_bytes[2]) {
+                    slash_count += 1;
+                } else {
+                    needs_replace = false;
+                }
+            }
+        }
+    }
+    if needs_replace {
+        let joined_bytes = joined.as_bytes();
+        while slash_count < joined_bytes.len()
+            && is_windows_path_separator(joined_bytes[slash_count])
+        {
+            slash_count += 1;
+        }
+        if slash_count >= 2 {
+            joined = format!("\\{}", &joined[slash_count..]);
+        }
+    }
+
+    // Preserve a path verbatim when any component names a reserved device.
+    let reserved = joined.split('\\').any(|part| {
+        !part.is_empty() && part.find(':').is_some_and(|ci| is_windows_reserved_name(part, ci))
+    });
+    if reserved {
+        return Ok(Value::String(joined.replace('/', "\\").into()));
+    }
+    Ok(Value::String(win32_normalize(&joined).into()))
 }
 
 /// Mirrors Node's `path.extname`. `win32` splits on both separators and skips
@@ -862,9 +921,7 @@ fn path_win_dirname(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn path_is_absolute(arguments: &[Value]) -> Result<Value, VmError> {
     let value = path_arg(arguments, 0)?;
-    Ok(Value::Boolean(
-        value.starts_with('/') || (value.len() > 2 && value.as_bytes()[1] == b':'),
-    ))
+    Ok(Value::Boolean(value.starts_with('/')))
 }
 
 fn path_is_absolute_win(arguments: &[Value]) -> Result<Value, VmError> {

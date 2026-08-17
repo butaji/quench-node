@@ -28,6 +28,7 @@ impl QuenchNodeHost {
                 path_win_to_namespaced(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::PathJoin) => path_join(arguments),
+            HostCapabilityKind::Custom(CapabilityName::PathWinJoin) => path_win_join(arguments),
             HostCapabilityKind::Custom(CapabilityName::PathExtname) => path_extname(arguments),
             HostCapabilityKind::Custom(CapabilityName::PathWinExtname) => path_win_extname(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferByteLength) => {
