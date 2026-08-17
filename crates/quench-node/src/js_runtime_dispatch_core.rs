@@ -430,12 +430,13 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsMkdirSync) => fs_mkdir(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsMkdirAsync) => {
                 let callback = arguments.last().cloned().ok_or(VmError::NotCallable)?;
-                let result = fs_mkdir(&arguments[..arguments.len().saturating_sub(1)])?;
-                quench_runtime::execute::call(
-                    &callback,
-                    &Value::Undefined,
-                    &[Value::Null, result],
-                )?;
+                let result = fs_mkdir(&arguments[..arguments.len().saturating_sub(1)]);
+                let args = match result {
+                    Ok(result) => vec![Value::Null, result],
+                    Err(VmError::Thrown(error)) => vec![error],
+                    Err(_) => vec![Value::Null, Value::Undefined],
+                };
+                quench_runtime::execute::call(&callback, &Value::Undefined, &args)?;
                 Ok(Value::Undefined)
             }
             HostCapabilityKind::Custom(CapabilityName::FsToUnixTimestamp) => {

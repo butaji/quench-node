@@ -46,6 +46,28 @@ fn fs_stat_async(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Undefined)
 }
 
+/// Builds a Node-shaped filesystem error (`code`, `syscall`, Error name) from
+/// an OS error.
+fn node_system_error(error: std::io::Error, syscall: &str, path: &str) -> VmError {
+    let code = match error.raw_os_error() {
+        Some(17) => "EEXIST",
+        Some(2) => "ENOENT",
+        Some(13) => "EACCES",
+        Some(20) => "ENOTDIR",
+        Some(21) => "EISDIR",
+        Some(22) => "EINVAL",
+        _ => "UNKNOWN",
+    };
+    let message = format!("{code}: {syscall} {path}, {code} '{path}'");
+    VmError::Thrown(quench_runtime::host_api::object(vec![
+        ("code".into(), Value::String(code.into())),
+        ("syscall".into(), Value::String(syscall.into())),
+        ("name".into(), Value::String("Error".into())),
+        ("message".into(), Value::String(message.into())),
+        ("path".into(), Value::String(path.into())),
+    ]))
+}
+
 fn fs_mkdir(arguments: &[Value]) -> Result<Value, VmError> {
     let path = path_arg(arguments, 0)?;
     let options = arguments.get(1);
@@ -56,14 +78,26 @@ fn fs_mkdir(arguments: &[Value]) -> Result<Value, VmError> {
         )
     });
     if let Some(options) = options {
-        if matches!(
-            quench_runtime::execute::get_property_result(options, "recursive"),
-            Ok(Value::String(_))
-        ) {
-            return Err(VmError::Thrown(fs_error(
-                "ERR_INVALID_ARG_TYPE",
-                "recursive must be a boolean",
-            )));
+        if let Ok(value) = quench_runtime::execute::get_property_result(options, "recursive") {
+            if !matches!(value, Value::Boolean(_) | Value::Undefined) {
+                let received = match value {
+                    Value::Null => "null".to_string(),
+                    Value::Undefined => "undefined".to_string(),
+                    Value::String(_) => "a string".to_string(),
+                    Value::Number(n) => n.to_string(),
+                    Value::Array(_) => "an array".to_string(),
+                    Value::Object(_) | Value::ObjectAlias(_) => "an object".to_string(),
+                    Value::Function(_) | Value::BoundFunction(_) => "a function".to_string(),
+                    _ => format!("{value:?}"),
+                };
+                return Err(VmError::Thrown(fs_error(
+                    "ERR_INVALID_ARG_TYPE",
+                    &format!(
+                        "The \"options.recursive\" property must be of type boolean. \
+                         Received {received}"
+                    ),
+                )));
+            }
         }
     }
     let mode = options
@@ -79,18 +113,53 @@ fn fs_mkdir(arguments: &[Value]) -> Result<Value, VmError> {
         .unwrap_or(0o777)
         & 0o777;
     if recursive {
-        let parent = Path::new(path).parent().map(Path::to_path_buf);
-        std::fs::create_dir_all(path).map_err(|error| VmError::EvalError(error.to_string()))?;
-        #[cfg(unix)]
-        {
-            let _ =
-                std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(mode));
+        // Collect the missing ancestors, deepest first, so we can create from
+        // the most-rootward missing directory down and report the first one
+        // created (or undefined when nothing was created).
+        let mut missing = Vec::new();
+        let mut current = Path::new(path).to_path_buf();
+        loop {
+            match std::fs::metadata(&current) {
+                Ok(meta) if meta.is_dir() => break,
+                Ok(_) => {
+                    // An existing non-directory blocks the path: EEXIST for the
+                    // target name itself, ENOTDIR for an intermediate component.
+                    let os = if current == Path::new(path) { 17 } else { 20 };
+                    return Err(node_system_error(
+                        std::io::Error::from_raw_os_error(os),
+                        "mkdir",
+                        &current.to_string_lossy(),
+                    ));
+                }
+                Err(_) => {
+                    missing.push(current.clone());
+                    match current.parent() {
+                        Some(parent) if !parent.as_os_str().is_empty() => {
+                            current = parent.to_path_buf();
+                        }
+                        _ => break,
+                    }
+                }
+            }
         }
-        return Ok(parent
-            .map(|path| Value::String(path.to_string_lossy().into()))
+        for created in missing.iter().rev() {
+            std::fs::create_dir(created).map_err(|error| {
+                node_system_error(error, "mkdir", &created.to_string_lossy())
+            })?;
+            #[cfg(unix)]
+            {
+                let _ = std::fs::set_permissions(
+                    created,
+                    std::os::unix::fs::PermissionsExt::from_mode(mode),
+                );
+            }
+        }
+        return Ok(missing
+            .last()
+            .map(|created| Value::String(created.to_string_lossy().into()))
             .unwrap_or(Value::Undefined));
     }
-    std::fs::create_dir(path).map_err(|error| VmError::EvalError(error.to_string()))?;
+    std::fs::create_dir(path).map_err(|error| node_system_error(error, "mkdir", path))?;
     #[cfg(unix)]
     {
         let _ = std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(mode));
