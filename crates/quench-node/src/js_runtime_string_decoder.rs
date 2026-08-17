@@ -99,22 +99,57 @@ fn string_decoder_constructor(
     Ok(object)
 }
 
+/// Raw bytes behind any Buffer/TypedArray/DataView value (all element kinds).
+fn array_view_bytes(value: &Value) -> Option<Vec<u8>> {
+    macro_rules! bytes_of {
+        ($view:expr, $offset:expr, $len:expr) => {
+            $view.buffer.bytes.borrow()[$offset..$offset + $len].to_vec()
+        };
+    }
+    match value {
+        Value::Uint8Array(v) => Some(bytes_of!(v, v.byte_offset, v.length)),
+        Value::Uint8ClampedArray(v) => Some(bytes_of!(v, v.byte_offset, v.length)),
+        Value::Int8Array(v) => Some(bytes_of!(v, v.byte_offset, v.length)),
+        Value::Int16Array(v) => Some(bytes_of!(v, v.byte_offset, v.length * 2)),
+        Value::Uint16Array(v) => Some(bytes_of!(v, v.byte_offset, v.length * 2)),
+        Value::Int32Array(v) => Some(bytes_of!(v, v.byte_offset, v.length * 4)),
+        Value::Uint32Array(v) => Some(bytes_of!(v, v.byte_offset, v.length * 4)),
+        Value::Float32Array(v) => Some(bytes_of!(v, v.byte_offset, v.length * 4)),
+        Value::Float64Array(v) => Some(bytes_of!(v, v.byte_offset, v.length * 8)),
+        Value::BigInt64Array(v) => Some(bytes_of!(v, v.byte_offset, v.length * 8)),
+        Value::BigUint64Array(v) => Some(bytes_of!(v, v.byte_offset, v.length * 8)),
+        Value::DataView(v) => Some(bytes_of!(v, v.byte_offset, v.byte_length)),
+        _ => None,
+    }
+}
+
 fn string_decoder_bytes(value: &Value) -> Result<Vec<u8>, VmError> {
-    let bytes = match value {
-        Value::Uint16Array(view) => view.buffer.bytes.borrow()
-            [view.byte_offset..view.byte_offset + view.length * 2]
-            .to_vec(),
-        Value::Uint32Array(view) => view.buffer.bytes.borrow()
-            [view.byte_offset..view.byte_offset + view.length * 4]
-            .to_vec(),
-        _ => string_or_bytes(Some(value)).map_err(|_| {
-            VmError::Thrown(fs_error(
-                "ERR_INVALID_ARG_TYPE",
-                "The \"buf\" argument must be an instance of Buffer, TypedArray, or DataView.",
-            ))
-        })?,
+    let bytes = match array_view_bytes(value) {
+        Some(bytes) => bytes,
+        None => {
+            let received = match value {
+                Value::Null => "null".to_string(),
+                Value::Undefined => "undefined".to_string(),
+                Value::Number(n) => n.to_string(),
+                Value::Boolean(b) => if *b { "true" } else { "false" }.to_string(),
+                Value::String(s) => format!("\"{s}\""),
+                _ => "type object".to_string(),
+            };
+            return Err(string_decoder_invalid_arg(received));
+        }
     };
     Ok(bytes)
+}
+
+/// Node-style `ERR_INVALID_ARG_TYPE` TypeError for the `buf` argument.
+fn string_decoder_invalid_arg(received: String) -> VmError {
+    let message =
+        "The \"buf\" argument must be an instance of Buffer, TypedArray, or DataView. Received ";
+    VmError::Thrown(quench_runtime::host_api::object(vec![
+        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        ("name".into(), Value::String("TypeError".into())),
+        ("message".into(), Value::String(format!("{message}{received}").into())),
+    ]))
 }
 
 /// Base64-encode raw bytes. When `url` is set, uses the URL-safe alphabet and
@@ -230,6 +265,12 @@ fn decode_utf8_stream(bytes: &[u8]) -> (String, Vec<u8>) {
 
 fn string_decoder_write(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = receiver.ok_or(VmError::NotCallable)?;
+    if quench_runtime::execute::get_property_result(receiver, "_pending").is_err() {
+        return Err(VmError::Thrown(quench_runtime::host_api::object(vec![
+            ("code".into(), Value::String("ERR_INVALID_THIS".into())),
+            ("name".into(), Value::String("TypeError".into())),
+        ])));
+    }
     let input = arguments.first().ok_or(VmError::NotCallable)?;
     let mut bytes = quench_runtime::execute::get_property_result(receiver, "_pending")
         .ok()
