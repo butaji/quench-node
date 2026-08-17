@@ -131,45 +131,156 @@ fn querystring_decode_bytes(value: &str) -> Vec<u8> {
 }
 
 fn querystring_escape(arguments: &[Value]) -> Result<Value, VmError> {
-    let value = arguments.first().map(safe_value_string).unwrap_or_default();
-    if let Some(Value::StringUnits(units)) = arguments.first() {
-        if units.as_slice() == [0xD801, b't' as u16, b'e' as u16, b's' as u16, b't' as u16] {
-            return Ok(Value::String("%F0%90%91%B4est".into()));
-        }
-        let mut text = String::new();
-        let mut index = 0;
-        while index < units.len() {
-            let unit = units[index];
-            let character = if (0xD800..=0xDBFF).contains(&unit) {
-                let Some(&low) = units.get(index + 1) else {
-                    return Err(VmError::Thrown(fs_error(
-                        "ERR_INVALID_URI",
-                        "URI malformed",
-                    )));
-                };
-                if !(0xDC00..=0xDFFF).contains(&low) {
-                    return Err(VmError::Thrown(fs_error(
-                        "ERR_INVALID_URI",
-                        "URI malformed",
-                    )));
-                }
-                index += 1;
-                char::from_u32(0x10000 + (((unit as u32 - 0xD800) << 10) | (low as u32 - 0xDC00)))
-                    .unwrap()
-            } else if (0xDC00..=0xDFFF).contains(&unit) {
-                return Err(VmError::Thrown(fs_error(
-                    "ERR_INVALID_URI",
-                    "URI malformed",
-                )));
-            } else {
-                char::from_u32(unit as u32).unwrap_or('\u{FFFD}')
-            };
-            text.push(character);
-            index += 1;
-        }
-        return Ok(Value::String(querystring_encode(&text).into()));
+    let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+    match querystring_coerce_string(&value)? {
+        Value::String(text) => Ok(Value::String(querystring_encode(&text).into())),
+        Value::StringUnits(units) => querystring_encode_units(&units),
+        _ => Ok(Value::String("".into())),
     }
-    Ok(Value::String(querystring_encode(&value).into()))
+}
+
+/// Coerce a value to a JS string following `String(value)` semantics (the
+/// object path uses `toString`/`valueOf` and throws a TypeError when neither
+/// yields a primitive). Surrogate-bearing input is kept as `StringUnits`.
+fn querystring_coerce_string(value: &Value) -> Result<Value, VmError> {
+    match value {
+        Value::StringUnits(_) => Ok(value.clone()),
+        Value::Array(_) => {
+            let text = quench_runtime::execute::get_property_result(value, "length")
+                .map(|length| {
+                    let count = match length {
+                        Value::Number(count) => count.max(0.0) as usize,
+                        _ => 0,
+                    };
+                    let mut parts = Vec::new();
+                    for index in 0..count {
+                        if let Ok(item) =
+                            quench_runtime::execute::get_property_result(value, &index.to_string())
+                        {
+                            if let Ok(coerced) = querystring_coerce_string(&item) {
+                                if let Ok(text) = querystring_value_text(&coerced) {
+                                    parts.push(text);
+                                }
+                            }
+                        }
+                    }
+                    parts.join(",")
+                })
+                .unwrap_or_default();
+            Ok(Value::String(text.into()))
+        }
+        Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_) | Value::Function(_)
+        | Value::BoundFunction(_) => querystring_call_to_primitive(value),
+        Value::String(text) if is_symbol_representation(text) => {
+            Err(VmError::Thrown(quench_runtime::host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+            ])))
+        }
+        other => Ok(Value::String(safe_value_string(other).into())),
+    }
+}
+
+fn querystring_value_text(value: &Value) -> Result<String, VmError> {
+    match value {
+        Value::String(text) => Ok(text.clone()),
+        Value::StringUnits(units) => {
+            let mut out = String::new();
+            for &unit in units.iter() {
+                out.push(char::from_u32(unit as u32).unwrap_or('\u{FFFD}'));
+            }
+            Ok(out)
+        }
+        _ => Ok(String::new()),
+    }
+}
+
+/// Call `toString` (then `valueOf`) on an object; throw a TypeError when the
+/// result is neither a string nor a primitive.
+fn querystring_call_to_primitive(value: &Value) -> Result<Value, VmError> {
+    for method in ["toString", "valueOf"] {
+        let Some(function) = quench_runtime::execute::get_property_result(value, method).ok()
+        else {
+            continue;
+        };
+        if matches!(
+            function,
+            Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)
+        ) {
+            if let Ok(result) = quench_runtime::execute::call(&function, value, &[]) {
+                match result {
+                    Value::String(_) => return Ok(result),
+                    Value::StringUnits(_) => return Ok(result),
+                    Value::Number(_) | Value::Boolean(_) | Value::BigInt(_) => {
+                        return Ok(Value::String(safe_value_string(&result).into()));
+                    }
+                    Value::Null | Value::Undefined => {
+                        return Ok(Value::String("null".into()));
+                    }
+                    _ => continue,
+                }
+            }
+        }
+    }
+    Err(VmError::Thrown(quench_runtime::host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+    ])))
+}
+
+/// Percent-encode a string of raw UTF-16 code units, matching Node's
+/// surrogate-pair handling for `encodeStr`.
+fn querystring_encode_units(units: &std::rc::Rc<Vec<u16>>) -> Result<Value, VmError> {
+    let mut output = String::new();
+    let len = units.len();
+    let mut i = 0usize;
+    while i < len {
+        let unit = units[i];
+        let mut c = unit as u32;
+        if c < 0x80 {
+            let byte = unit as u8;
+            if byte.is_ascii_alphanumeric() || b"-._~!*'()".contains(&byte) {
+                output.push(byte as char);
+            } else {
+                output.push_str(&format!("%{byte:02X}"));
+            }
+            i += 1;
+        } else if c < 0x800 {
+            output.push_str(&format!(
+                "%{:02X}%{:02X}",
+                0xC0 | (c >> 6),
+                0x80 | (c & 0x3f)
+            ));
+            i += 1;
+        } else if c < 0xD800 || c >= 0xE000 {
+            output.push_str(&format!(
+                "%{:02X}%{:02X}%{:02X}",
+                0xE0 | (c >> 12),
+                0x80 | ((c >> 6) & 0x3f),
+                0x80 | (c & 0x3f)
+            ));
+            i += 1;
+        } else {
+            // Surrogate: consume the following code unit as the low half.
+            i += 1;
+            if i >= len {
+                return Err(VmError::Thrown(quench_runtime::host_api::object(vec![
+                    ("code".into(), Value::String("ERR_INVALID_URI".into())),
+                    ("name".into(), Value::String("URIError".into())),
+                    ("message".into(), Value::String("URI malformed".into())),
+                ])));
+            }
+            let c2 = (units[i] as u32) & 0x3FF;
+            c = 0x10000 + (((c & 0x3FF) << 10) | c2);
+            output.push_str(&format!(
+                "%{:02X}%{:02X}%{:02X}%{:02X}",
+                0xF0 | (c >> 18),
+                0x80 | ((c >> 12) & 0x3f),
+                0x80 | ((c >> 6) & 0x3f),
+                0x80 | (c & 0x3f)
+            ));
+            i += 1;
+        }
+    }
+    Ok(Value::String(output.into()))
 }
 
 fn querystring_encode(value: &str) -> String {
