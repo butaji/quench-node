@@ -92,7 +92,9 @@ fn path_module() -> Value {
                 ),
                 (
                     "extname".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::PathExtname)),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::PathWinExtname,
+                    )),
                 ),
                 (
                     "normalize".into(),

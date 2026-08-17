@@ -431,6 +431,7 @@ impl CapabilityName {
     const PathWinMatchesGlob: u16 = 2084;
     const PathResolve: u16 = 2085;
     const PathWinResolve: u16 = 2086;
+    const PathWinExtname: u16 = 2087;
     const FsStatAsync: u16 = 1526;
     const FsLstatAsync: u16 = 1527;
     const FsStatsIsDirectory: u16 = 1528;

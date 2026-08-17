@@ -26,6 +26,7 @@ impl QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::PathJoin) => path_join(arguments),
             HostCapabilityKind::Custom(CapabilityName::PathExtname) => path_extname(arguments),
+            HostCapabilityKind::Custom(CapabilityName::PathWinExtname) => path_win_extname(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferByteLength) => {
                 buffer_byte_length(arguments)
             }

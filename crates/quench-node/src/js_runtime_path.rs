@@ -388,20 +388,71 @@ fn path_join(arguments: &[Value]) -> Result<Value, VmError> {
     path_normalize(&[joined], false)
 }
 
-fn path_extname(arguments: &[Value]) -> Result<Value, VmError> {
-    let path = path_arg(arguments, 0)?;
-    let path = path.trim_end_matches(['/', '\\']);
-    let base = path.rsplit(['/', '\\']).next().unwrap_or(path);
-    if base == "." || base == ".." {
-        return Ok(Value::String("".into()));
-    }
-    let Some(dot) = base.rfind('.') else {
-        return Ok(Value::String("".into()));
+/// Mirrors Node's `path.extname`. `win32` splits on both separators and skips
+/// a leading drive root; the posix variant splits on `/` only (a backslash is
+/// an ordinary character) and still honors the drive-prefix quirk Node shares
+/// across both platforms.
+fn path_extname_core(input: &str, win32: bool) -> String {
+    let bytes = input.as_bytes();
+    let len = bytes.len() as isize;
+    let is_sep = |c: u8| c == b'/' || (win32 && c == b'\\');
+    let start: isize = if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        2
+    } else {
+        0
     };
-    if dot == 0 && !base[1..].contains('.') {
-        return Ok(Value::String("".into()));
+    let mut start_part = start;
+    let mut start_dot: isize = -1;
+    let mut end: isize = -1;
+    let mut matched_slash = true;
+    let mut pre_dot_state = 0i8;
+    let mut i = len;
+    while i > start {
+        i -= 1;
+        if is_sep(bytes[i as usize]) {
+            if !matched_slash {
+                start_part = i + 1;
+                break;
+            }
+            continue;
+        }
+        if end == -1 {
+            matched_slash = false;
+            end = i + 1;
+        }
+        if bytes[i as usize] == b'.' {
+            if start_dot == -1 {
+                start_dot = i;
+            } else if pre_dot_state != 1 {
+                pre_dot_state = 1;
+            }
+        } else if start_dot != -1 {
+            pre_dot_state = -1;
+        }
     }
-    Ok(Value::String(base[dot..].to_owned().into()))
+    if start_dot == -1
+        || end == -1
+        || pre_dot_state == 0
+        || (pre_dot_state == 1 && start_dot == end - 1 && start_dot == start_part + 1)
+    {
+        return String::new();
+    }
+    let start_dot = start_dot as usize;
+    let end = end as usize;
+    if start_dot >= end || end > bytes.len() {
+        return String::new();
+    }
+    input[start_dot..end].to_string()
+}
+
+fn path_extname(arguments: &[Value]) -> Result<Value, VmError> {
+    let input = path_arg(arguments, 0)?;
+    Ok(Value::String(path_extname_core(input, false).into()))
+}
+
+fn path_win_extname(arguments: &[Value]) -> Result<Value, VmError> {
+    let input = path_arg(arguments, 0)?;
+    Ok(Value::String(path_extname_core(input, true).into()))
 }
 
 fn path_dirname(arguments: &[Value]) -> Result<Value, VmError> {
