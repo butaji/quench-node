@@ -111,7 +111,12 @@ fn path_module() -> Value {
                     capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinFormat)),
                 ),
                 ("relative".into(), relative),
-                ("dirname".into(), dirname),
+                (
+                    "dirname".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::PathWinDirname,
+                    )),
+                ),
                 (
                     "isAbsolute".into(),
                     capability_function(HostCapabilityKind::Custom(

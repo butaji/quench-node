@@ -255,6 +255,7 @@ impl CapabilityName {
     const UrlFormat: u16 = 2069;
     const PathNormalize: u16 = 2070;
     const PathWinNormalize: u16 = 2071;
+    const PathWinDirname: u16 = 2072;
     const UtilPromisify: u16 = 1950;
     const UtilDeprecate: u16 = 2099;
     const UtilParseEnv: u16 = 2098;

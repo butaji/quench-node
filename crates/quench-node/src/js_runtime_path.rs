@@ -455,32 +455,122 @@ fn path_win_extname(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::String(path_extname_core(input, true).into()))
 }
 
-fn path_dirname(arguments: &[Value]) -> Result<Value, VmError> {
-    let value = path_arg(arguments, 0)?;
-    let win32 = value.contains('\\') || (value.len() >= 2 && value.as_bytes()[1] == b':');
-    let separator = if win32 { '\\' } else { '/' };
-    if win32 && value.len() == 3 && value.as_bytes()[1] == b':' && value.as_bytes()[2] == b'\\' {
-        return Ok(Value::String(value.into()));
+/// Mirrors Node's `path.dirname`. The posix variant splits on `/` only (with
+/// the `//`-root rule); the win32 variant also recognizes a drive root and a
+/// UNC share as the directory root.
+fn path_dirname_core(input: &str, win32: bool) -> String {
+    let bytes = input.as_bytes();
+    let len = bytes.len();
+    let is_sep = |c: u8| c == b'/' || (win32 && c == b'\\');
+    let is_device_root = |c: u8| c.is_ascii_alphabetic();
+
+    if len == 0 {
+        return ".".into();
     }
-    let value = value.trim_end_matches(['/', '\\']);
-    let dirname = match value.rfind(separator) {
-        Some(0) => {
-            if win32 {
-                "\\"
+    if len == 1 {
+        return if is_sep(bytes[0]) {
+            input.to_string()
+        } else {
+            ".".into()
+        };
+    }
+
+    if !win32 {
+        let has_root = bytes[0] == b'/';
+        let mut end: isize = -1;
+        let mut matched_slash = true;
+        let mut i = len as isize;
+        while i > 1 {
+            i -= 1;
+            if bytes[i as usize] == b'/' {
+                if !matched_slash {
+                    end = i;
+                    break;
+                }
             } else {
-                "/"
+                matched_slash = false;
             }
         }
-        Some(index) => &value[..index],
-        None => {
-            if win32 && value.len() == 2 && value.as_bytes()[1] == b':' {
-                value
-            } else {
-                "."
+        if end == -1 {
+            return if has_root { "/".into() } else { ".".into() };
+        }
+        if has_root && end == 1 {
+            return "//".into();
+        }
+        return input[..end as usize].to_string();
+    }
+
+    // win32: locate the directory root (UNC share or device drive). The scan
+    // begins just past the root so separators inside it are not treated as
+    // component separators.
+    let mut root_end: isize = -1;
+    if is_sep(bytes[0]) {
+        root_end = 1;
+        if is_sep(bytes[1]) {
+            // Possible UNC root: \\<server>\<share>\
+            let (mut j, mut last) = (2usize, 2usize);
+            while j < len && !is_sep(bytes[j]) {
+                j += 1;
+            }
+            if j < len && j != last {
+                last = j;
+                while j < len && is_sep(bytes[j]) {
+                    j += 1;
+                }
+                if j < len && j != last {
+                    last = j;
+                    while j < len && !is_sep(bytes[j]) {
+                        j += 1;
+                    }
+                    if j == len {
+                        return input.to_string();
+                    }
+                    if j != last {
+                        root_end = j as isize + 1;
+                    }
+                }
             }
         }
-    };
-    Ok(Value::String(dirname.into()))
+    } else if is_device_root(bytes[0]) && bytes[1] == b':' {
+        root_end = if len > 2 && is_sep(bytes[2]) { 3 } else { 2 };
+    }
+    let offset = if root_end == -1 { 0 } else { root_end };
+
+    let mut end: isize = -1;
+    let mut matched_slash = true;
+    let mut i = len as isize;
+    while i > offset {
+        i -= 1;
+        if is_sep(bytes[i as usize]) {
+            if !matched_slash {
+                end = i;
+                break;
+            }
+        } else {
+            matched_slash = false;
+        }
+    }
+    if end == -1 {
+        if root_end == -1 {
+            return ".".into();
+        }
+        end = root_end;
+    }
+    let mut end = end as usize;
+    if end > len {
+        end = len;
+    }
+    input[..end].to_string()
+}
+
+fn path_dirname(arguments: &[Value]) -> Result<Value, VmError> {
+    let input = path_arg(arguments, 0)?;
+    Ok(Value::String(path_dirname_core(input, false).into()))
+}
+
+fn path_win_dirname(arguments: &[Value]) -> Result<Value, VmError> {
+    let input = path_arg(arguments, 0)?;
+    Ok(Value::String(path_dirname_core(input, true).into()))
 }
 
 fn path_is_absolute(arguments: &[Value]) -> Result<Value, VmError> {
