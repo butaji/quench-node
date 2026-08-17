@@ -69,7 +69,7 @@ fn path_basename_core(input: &str, suffix: Option<&str>, win32: bool) -> String 
     let len = bytes.len();
     let is_sep = |c: u8| c == b'/' || (win32 && c == b'\\');
 
-    let mut start = if len >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+    let mut start = if win32 && len >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
         2
     } else {
         0
@@ -477,101 +477,211 @@ fn path_normalize(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
     Ok(Value::String(result.into()))
 }
 
-fn path_parse(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
-    let value = path_arg(arguments, 0)?;
-    let separator = if win32 && value.starts_with('/') {
-        '/'
-    } else if win32 {
-        '\\'
-    } else {
-        '/'
+struct PathParts {
+    root: String,
+    dir: String,
+    base: String,
+    ext: String,
+    name: String,
+}
+
+/// Port of Node's `path.parse` for both platforms. Extracts the directory,
+/// basename, extension, and root from a path.
+fn path_parse_core(input: &str, win32: bool) -> PathParts {
+    let bytes = input.as_bytes();
+    let len = bytes.len();
+    let is_sep = |c: u8| c == b'/' || (win32 && c == b'\\');
+
+    let empty = PathParts {
+        root: String::new(),
+        dir: String::new(),
+        base: String::new(),
+        ext: String::new(),
+        name: String::new(),
     };
-    let normalized = if win32 && separator == '\\' {
-        value.replace('/', "\\")
-    } else {
-        value.to_owned()
-    };
-    let root = if win32
-        && normalized.len() >= 3
-        && normalized.as_bytes()[1] == b':'
-        && normalized.as_bytes()[2] == b'\\'
-    {
-        &normalized[..3]
-    } else if win32 && normalized.len() == 2 && normalized.as_bytes()[1] == b':' {
-        &normalized[..2]
-    } else if win32 && normalized.starts_with("\\\\") {
-        let mut parts = normalized.split('\\').filter(|part| !part.is_empty());
-        let server = parts.next().unwrap_or("");
-        let share = parts.next().unwrap_or("");
-        return path_parse_windows_with_root(&normalized, &format!("\\\\{server}\\{share}\\"));
-    } else if win32 && (normalized.starts_with('\\') || normalized.starts_with('/')) {
-        if separator == '/' {
-            "/"
-        } else {
-            "\\"
+    if len == 0 {
+        return empty;
+    }
+
+    let mut body;
+    if win32 {
+        let code = bytes[0];
+        let mut root_end = 0usize;
+        if len == 1 {
+            if is_sep(code) {
+                return PathParts {
+                    root: input.to_string(),
+                    dir: input.to_string(),
+                    base: String::new(),
+                    ext: String::new(),
+                    name: String::new(),
+                };
+            }
+            return PathParts {
+                root: String::new(),
+                dir: String::new(),
+                base: input.to_string(),
+                ext: String::new(),
+                name: input.to_string(),
+            };
         }
-    } else if !win32 && value.starts_with('/') {
-        "/"
+        if is_sep(code) {
+            root_end = 1;
+            if is_sep(bytes[1]) {
+                let mut j = 2usize;
+                let mut last = 2usize;
+                while j < len && !is_sep(bytes[j]) {
+                    j += 1;
+                }
+                if j < len && j != last {
+                    last = j;
+                    while j < len && is_sep(bytes[j]) {
+                        j += 1;
+                    }
+                    if j < len && j != last {
+                        last = j;
+                        while j < len && !is_sep(bytes[j]) {
+                            j += 1;
+                        }
+                        if j == len {
+                            root_end = j;
+                        } else if j != last {
+                            root_end = j + 1;
+                        }
+                    }
+                }
+            }
+        } else if is_windows_device_root(code) && bytes[1] == b':' {
+            if len <= 2 {
+                let s = input.to_string();
+                return PathParts {
+                    root: s.clone(),
+                    dir: s,
+                    base: String::new(),
+                    ext: String::new(),
+                    name: String::new(),
+                };
+            }
+            root_end = 2;
+            if is_sep(bytes[2]) {
+                if len == 3 {
+                    let s = input.to_string();
+                    return PathParts {
+                        root: s.clone(),
+                        dir: s,
+                        base: String::new(),
+                        ext: String::new(),
+                        name: String::new(),
+                    };
+                }
+                root_end = 3;
+            }
+        }
+        body = parse_split_tail(input, root_end, is_sep, win32);
+        if root_end > 0 {
+            body.root = input[..root_end].to_string();
+            if body.dir.is_empty() {
+                body.dir = body.root.clone();
+            }
+        }
     } else {
-        ""
+        let is_absolute = bytes[0] == b'/';
+        let start = if is_absolute { 1 } else { 0 };
+        let mut parts = parse_split_tail(input, start, is_sep, win32);
+        if is_absolute {
+            parts.root = "/".into();
+            if parts.dir.is_empty() {
+                parts.dir = "/".into();
+            }
+        }
+        body = parts;
+    }
+    body
+}
+
+/// Runs the shared "get non-dir info" scan and, for win32, computes `dir`.
+fn parse_split_tail(input: &str, start: usize, is_sep: impl Fn(u8) -> bool, win32: bool) -> PathParts {
+    let bytes = input.as_bytes();
+    let len = bytes.len();
+    let mut start_dot: isize = -1;
+    let mut start_part = start;
+    let mut end: isize = -1;
+    let mut matched_slash = true;
+    let mut pre_dot_state = 0i8;
+    let mut i = len;
+    while i > start {
+        i -= 1;
+        let code = bytes[i];
+        if is_sep(code) {
+            if !matched_slash {
+                start_part = i + 1;
+                break;
+            }
+            continue;
+        }
+        if end == -1 {
+            matched_slash = false;
+            end = i as isize + 1;
+        }
+        if code == b'.' {
+            if start_dot == -1 {
+                start_dot = i as isize;
+            } else if pre_dot_state != 1 {
+                pre_dot_state = 1;
+            }
+        } else if start_dot != -1 {
+            pre_dot_state = -1;
+        }
+    }
+
+    let mut parts = PathParts {
+        root: String::new(),
+        dir: String::new(),
+        base: String::new(),
+        ext: String::new(),
+        name: String::new(),
     };
-    let trimmed = normalized.trim_end_matches(separator);
-    let (dir, base) = if win32 && normalized.len() == 2 && normalized.as_bytes()[1] == b':' {
-        (root, "")
-    } else if win32
-        && normalized.len() == 3
-        && normalized.as_bytes()[1] == b':'
-        && normalized.as_bytes()[2] == b'\\'
-    {
-        (root, "")
-    } else if trimmed.is_empty() && !root.is_empty() {
-        (root, "")
-    } else {
-        trimmed
-            .rsplit_once(separator)
-            .map_or((root, trimmed), |(dir, base)| (dir, base))
-    };
-    let dir_with_extra_separator = if win32 {
-        normalized.rsplit_once(separator).and_then(|(prefix, _)| {
-            prefix
-                .ends_with(separator)
-                .then(|| format!("{dir}{separator}"))
-        })
-    } else {
-        None
-    };
-    let dir = dir_with_extra_separator.as_deref().unwrap_or(dir);
-    let (name, ext) = base
-        .rfind('.')
-        .filter(|index| *index > 0)
-        .map_or((base, ""), |index| (&base[..index], &base[index..]));
+    if end != -1 {
+        let end_u = end as usize;
+        let spliced_start = start_part;
+        let dotless = start_dot == -1
+            || pre_dot_state == 0
+            || (pre_dot_state == 1 && start_dot == end - 1 && start_dot == start_part as isize + 1);
+        if dotless {
+            parts.base = input[spliced_start..end_u].to_string();
+            parts.name = parts.base.clone();
+        } else {
+            parts.name = input[spliced_start..start_dot as usize].to_string();
+            parts.base = input[spliced_start..end_u].to_string();
+            parts.ext = input[start_dot as usize..end_u].to_string();
+        }
+        if win32 {
+            if start_part > 0 && start_part != start {
+                parts.dir = input[..start_part - 1].to_string();
+            }
+        } else if start_part > 0 {
+            parts.dir = input[..start_part - 1].to_string();
+        }
+    } else if win32 && start > 0 {
+        parts.dir = input[..start].to_string();
+    }
+    parts
+}
+
+fn path_parse(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
+    let input = path_arg(arguments, 0)?;
+    let parts = path_parse_core(input, win32);
     Ok(Value::object(vec![
-        ("root".into(), Value::String(root.to_string().into())),
-        ("dir".into(), Value::String(dir.to_string().into())),
-        ("base".into(), Value::String(base.to_string().into())),
-        ("ext".into(), Value::String(ext.to_string().into())),
-        ("name".into(), Value::String(name.to_string().into())),
+        ("root".into(), Value::String(parts.root.into())),
+        ("dir".into(), Value::String(parts.dir.into())),
+        ("base".into(), Value::String(parts.base.into())),
+        ("ext".into(), Value::String(parts.ext.into())),
+        ("name".into(), Value::String(parts.name.into())),
     ]))
 }
 
-fn path_parse_windows_with_root(value: &str, root: &str) -> Result<Value, VmError> {
-    let trimmed = value.trim_end_matches('\\');
-    let (dir, base) = trimmed
-        .rsplit_once('\\')
-        .map_or((root, trimmed), |(dir, base)| (dir, base));
-    let (name, ext) = base
-        .rfind('.')
-        .filter(|index| *index > 0)
-        .map_or((base, ""), |index| (&base[..index], &base[index..]));
-    Ok(Value::object(vec![
-        ("root".into(), Value::String(root.to_owned().into())),
-        ("dir".into(), Value::String(dir.to_owned().into())),
-        ("base".into(), Value::String(base.to_owned().into())),
-        ("ext".into(), Value::String(ext.to_owned().into())),
-        ("name".into(), Value::String(name.to_owned().into())),
-    ]))
-}
-
+/// Port of Node's `_format(sep, pathObject)`: `dir` defaults to `root`, and
+/// `base` defaults to `name + formatExt(ext)`.
 fn path_format(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
     let Some(Value::Object(object)) = arguments.first() else {
         return Err(VmError::Thrown(fs_error(
@@ -590,41 +700,29 @@ fn path_format(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
             })
             .unwrap_or_default()
     };
-    let dir = {
-        let value = string_prop("dir");
-        if value.is_empty() {
-            string_prop("root")
+    let root = string_prop("root");
+    let dir = string_prop("dir");
+    let dir: String = if dir.is_empty() { root.clone() } else { dir };
+    let base = string_prop("base");
+    let base = if base.is_empty() {
+        let name = string_prop("name");
+        let ext = string_prop("ext");
+        let ext = if ext.is_empty() || ext.starts_with('.') {
+            ext
         } else {
-            value
-        }
+            format!(".{ext}")
+        };
+        format!("{name}{ext}")
+    } else {
+        base
     };
-    let base = get("base")
-        .and_then(|value| match value {
-            Value::String(value) => Some(value.clone()),
-            _ => None,
-        })
-        .unwrap_or_else(|| {
-            let name = string_prop("name");
-            let ext = string_prop("ext");
-            let ext = if ext.is_empty() || ext.starts_with('.') {
-                ext
-            } else {
-                format!(".{ext}")
-            };
-            format!("{name}{ext}")
-        });
     let separator = if win32 { '\\' } else { '/' };
     let output = if dir.is_empty() {
         base
-    } else if win32 && dir.ends_with(':') {
+    } else if dir == root {
         format!("{dir}{base}")
     } else {
-        format!(
-            "{}{}{}",
-            dir.strip_suffix(separator).unwrap_or(dir.as_str()),
-            separator,
-            base
-        )
+        format!("{dir}{separator}{base}")
     };
     Ok(Value::String(output.into()))
 }
@@ -967,7 +1065,11 @@ fn path_extname_core(input: &str, win32: bool) -> String {
     let bytes = input.as_bytes();
     let len = bytes.len() as isize;
     let is_sep = |c: u8| c == b'/' || (win32 && c == b'\\');
-    let start: isize = if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+    let start: isize = if win32
+        && bytes.len() >= 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+    {
         2
     } else {
         0
