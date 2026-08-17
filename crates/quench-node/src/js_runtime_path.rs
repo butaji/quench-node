@@ -160,33 +160,320 @@ fn path_win_basename(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::String(value.into()))
 }
 
-fn path_normalize(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
-    let value = path_arg(arguments, 0)?;
-    let separator = if win32 { '\\' } else { '/' };
-    let value = if win32 {
-        value.replace('/', "\\")
-    } else {
-        value.replace('\\', "/")
-    };
-    let absolute =
-        value.starts_with(separator) || (win32 && value.len() > 2 && value.as_bytes()[1] == b':');
-    let mut parts = Vec::new();
-    for part in value.split(separator) {
-        match part {
-            "" | "." => {}
-            ".." => {
-                parts.pop();
+fn is_windows_path_separator(code: u8) -> bool {
+    code == b'/' || code == b'\\'
+}
+
+fn is_windows_device_root(code: u8) -> bool {
+    code.is_ascii_alphabetic()
+}
+
+fn is_windows_reserved_name(input: &str, colon_index: usize) -> bool {
+    let device_part = input[..colon_index].to_ascii_uppercase();
+    matches!(
+        device_part.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+            | "COM\u{b9}"
+            | "COM\u{b2}"
+            | "COM\u{b3}"
+            | "LPT\u{b9}"
+            | "LPT\u{b2}"
+            | "LPT\u{b3}"
+    )
+}
+
+/// Port of Node's `normalizeString`. Appends the segments described by
+/// `path`, collapsing `.` segments and honouring `..` (only above the root
+/// when `allow_above_root`).
+fn normalize_string(
+    path: &str,
+    allow_above_root: bool,
+    separator: char,
+    is_sep: impl Fn(u8) -> bool,
+) -> String {
+    let bytes = path.as_bytes();
+    let len = bytes.len();
+    let mut res = String::new();
+    let mut last_segment_length = 0usize;
+    let mut last_slash: isize = -1;
+    let mut dots: i8 = 0;
+    let mut code: u8 = b'?';
+    let mut i = 0usize;
+    loop {
+        if i > len {
+            break;
+        }
+        if i < len {
+            code = bytes[i];
+        } else {
+            if is_sep(code) {
+                break;
             }
-            value => parts.push(value),
+            code = b'/';
+        }
+        if is_sep(code) {
+            if last_slash == i as isize - 1 || dots == 1 {
+                // Consecutive separator or a single-dot segment: skip.
+                last_slash = i as isize;
+                dots = 0;
+            } else if dots == 2 {
+                let ends_with_dotdot = res.len() >= 2
+                    && last_segment_length == 2
+                    && res.as_bytes()[res.len() - 1] == b'.'
+                    && res.as_bytes()[res.len() - 2] == b'.';
+                if !ends_with_dotdot {
+                    // Pop the previous segment (Node `continue`s so the `..`
+                    // that resolved something is not re-added above the root).
+                    if res.len() > 2 {
+                        let last_slash_index =
+                            res.len() as isize - last_segment_length as isize - 1;
+                        if last_slash_index < 0 {
+                            res.clear();
+                            last_segment_length = 0;
+                        } else {
+                            res.truncate(last_slash_index as usize);
+                            last_segment_length = match res.rfind(separator) {
+                                Some(index) => res.len() - 1 - index,
+                                None => res.len(),
+                            };
+                        }
+                        last_slash = i as isize;
+                        dots = 0;
+                        i += 1;
+                        continue;
+                    } else if !res.is_empty() {
+                        res.clear();
+                        last_segment_length = 0;
+                        last_slash = i as isize;
+                        dots = 0;
+                        i += 1;
+                        continue;
+                    }
+                }
+                if allow_above_root {
+                    if res.is_empty() {
+                        res.push_str("..");
+                    } else {
+                        res.push(separator);
+                        res.push_str("..");
+                    }
+                    last_segment_length = 2;
+                }
+                last_slash = i as isize;
+                dots = 0;
+            } else {
+                let segment_start = (last_slash + 1).max(0) as usize;
+                let segment = &path[segment_start..i];
+                if res.is_empty() {
+                    res.push_str(segment);
+                } else {
+                    res.push(separator);
+                    res.push_str(segment);
+                }
+                last_segment_length = (i as isize - last_slash - 1) as usize;
+                last_slash = i as isize;
+                dots = 0;
+            }
+        } else if code == b'.' && dots != -1 {
+            dots += 1;
+        } else {
+            dots = -1;
+        }
+        i += 1;
+    }
+    res
+}
+
+fn posix_normalize(input: &str) -> String {
+    if input.is_empty() {
+        return ".".into();
+    }
+    let bytes = input.as_bytes();
+    let is_absolute = bytes[0] == b'/';
+    let trailing_separator = bytes[bytes.len() - 1] == b'/';
+    let mut path = normalize_string(input, !is_absolute, '/', |c| c == b'/');
+    if path.is_empty() {
+        if is_absolute {
+            return "/".into();
+        }
+        return if trailing_separator {
+            "./".into()
+        } else {
+            ".".into()
+        };
+    }
+    if trailing_separator {
+        path.push('/');
+    }
+    if is_absolute {
+        format!("/{path}")
+    } else {
+        path
+    }
+}
+
+fn win32_normalize(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let len = bytes.len();
+    if len == 0 {
+        return ".".into();
+    }
+    let mut root_end = 0usize;
+    let mut device: Option<String> = None;
+    let mut is_absolute = false;
+    let code = bytes[0];
+
+    if len == 1 {
+        return if code == b'/' { "\\".into() } else { input.to_string() };
+    }
+    if is_windows_path_separator(code) {
+        is_absolute = true;
+        if is_windows_path_separator(bytes[1]) {
+            let mut j = 2usize;
+            let mut last = 2usize;
+            while j < len && !is_windows_path_separator(bytes[j]) {
+                j += 1;
+            }
+            if j < len && j != last {
+                let first_part = &input[last..j];
+                last = j;
+                while j < len && is_windows_path_separator(bytes[j]) {
+                    j += 1;
+                }
+                if j < len && j != last {
+                    last = j;
+                    while j < len && !is_windows_path_separator(bytes[j]) {
+                        j += 1;
+                    }
+                    if j == len || j != last {
+                        if first_part == "." || first_part == "?" {
+                            device = Some(format!("\\\\{first_part}"));
+                            root_end = 4;
+                            if let Some(colon_index) = input.find(':') {
+                                let possible_device = &input[4..=colon_index];
+                                if is_windows_reserved_name(possible_device, possible_device.len() - 1)
+                                {
+                                    device = Some(format!("\\\\?\\{possible_device}"));
+                                    root_end = 4 + possible_device.len();
+                                }
+                            }
+                        } else if j == len {
+                            return format!(
+                                "\\\\{first_part}\\{}\\",
+                                &input[last..]
+                            );
+                        } else {
+                            device = Some(format!("\\\\{first_part}\\{}", &input[last..j]));
+                            root_end = j;
+                        }
+                    }
+                }
+            }
+        } else {
+            root_end = 1;
+        }
+    } else {
+        let colon_index = input.find(':').unwrap_or(len);
+        if colon_index > 0 {
+            if is_windows_device_root(code) && colon_index == 1 {
+                device = Some(input[..2].to_string());
+                root_end = 2;
+                if len > 2 && is_windows_path_separator(bytes[2]) {
+                    is_absolute = true;
+                    root_end = 3;
+                }
+            } else if is_windows_reserved_name(input, colon_index) {
+                device = Some(input[..=colon_index].to_string());
+                root_end = colon_index + 1;
+            }
         }
     }
-    let mut result = parts.join(&separator.to_string());
-    if absolute && !(win32 && result.len() > 1 && result.as_bytes()[1] == b':') {
-        result = format!("{separator}{result}");
+
+    let mut tail = if root_end < len {
+        normalize_string(&input[root_end..], !is_absolute, '\\', is_windows_path_separator)
+    } else {
+        String::new()
+    };
+    if tail.is_empty() && !is_absolute {
+        tail.push('.');
     }
-    if result.is_empty() {
-        result = ".".into();
+    if !tail.is_empty() && is_windows_path_separator(bytes[len - 1]) {
+        tail.push('\\');
     }
+
+    if !is_absolute
+        && device.is_none()
+        && input.contains(':')
+        && tail.len() >= 2
+        && is_windows_device_root(tail.as_bytes()[0])
+        && tail.as_bytes()[1] == b':'
+    {
+        return format!(".\\{tail}");
+    }
+    if !is_absolute && device.is_none() && input.contains(':') {
+        let mut index = input.find(':');
+        while let Some(colon) = index {
+            if colon == len - 1 || is_windows_path_separator(bytes[colon + 1]) {
+                return format!(".\\{tail}");
+            }
+            index = if colon + 1 < len {
+                input[colon + 1..].find(':').map(|c| colon + 1 + c)
+            } else {
+                None
+            };
+        }
+    }
+
+    let colon_index = input.find(':').unwrap_or(len);
+    if is_windows_reserved_name(input, colon_index) {
+        return format!(".\\{}{tail}", device.as_deref().unwrap_or(""));
+    }
+    match device {
+        None => {
+            if is_absolute {
+                format!("\\{tail}")
+            } else {
+                tail
+            }
+        }
+        Some(device) => {
+            if is_absolute {
+                format!("{device}\\{tail}")
+            } else {
+                format!("{device}{tail}")
+            }
+        }
+    }
+}
+
+fn path_normalize(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
+    let value = path_arg(arguments, 0)?;
+    let result = if win32 {
+        win32_normalize(value)
+    } else {
+        posix_normalize(value)
+    };
     Ok(Value::String(result.into()))
 }
 
