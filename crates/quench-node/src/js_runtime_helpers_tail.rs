@@ -441,21 +441,15 @@ fn basename(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(path)) = arguments.first() else {
         return Err(VmError::EvalError("path.basename expects a string".into()));
     };
-    let mut value = Path::new(path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(path)
-        .to_string();
-    if let Some(suffix) = arguments.get(1) {
-        let Value::String(suffix) = suffix else {
+    let suffix = match arguments.get(1) {
+        None => None,
+        Some(Value::String(suffix)) => Some(suffix.as_str()),
+        Some(_) => {
             return Err(VmError::Thrown(fs_error(
                 "ERR_INVALID_ARG_TYPE",
                 "suffix must be a string",
-            )));
-        };
-        if value.ends_with(suffix) {
-            value.truncate(value.len() - suffix.len());
+            )))
         }
-    }
-    Ok(Value::String(value.into()))
+    };
+    Ok(Value::String(path_basename_core(path, suffix, false).into()))
 }

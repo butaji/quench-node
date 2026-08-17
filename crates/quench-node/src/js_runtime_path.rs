@@ -56,24 +56,107 @@ fn decode_file_url(value: &str) -> String {
         .replace("%5c", "\\")
 }
 
+/// Mirrors Node's `path.basename` for a separator/`win32` configuration:
+///
+/// - A leading drive root (`"C:"`) is skipped so it is not part of the result
+///   and does not turn the separator after it into a trailing separator.
+/// - The optional `suffix` is stripped only when it matches from the end of the
+///   component and does not consume the entire component. When the suffix
+///   equals the whole component or the whole path, Node returns the component
+///   unchanged (or an empty string when `suffix === path`).
+fn path_basename_core(input: &str, suffix: Option<&str>, win32: bool) -> String {
+    let bytes = input.as_bytes();
+    let len = bytes.len();
+    let is_sep = |c: u8| c == b'/' || (win32 && c == b'\\');
+
+    let mut start = if len >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        2
+    } else {
+        0
+    };
+
+    let Some(suffix) = suffix.filter(|s| !s.is_empty() && s.len() <= len) else {
+        let mut end: isize = -1;
+        let mut matched_slash = true;
+        let mut i = len;
+        while i > start {
+            i -= 1;
+            if is_sep(bytes[i]) {
+                if !matched_slash {
+                    start = i + 1;
+                    break;
+                }
+            } else if end == -1 {
+                matched_slash = false;
+                end = i as isize + 1;
+            }
+        }
+        if end == -1 {
+            return String::new();
+        }
+        return input[start..end as usize].to_string();
+    };
+
+    if suffix == input {
+        return String::new();
+    }
+    let suffix_bytes = suffix.as_bytes();
+    let mut ext_idx: isize = suffix.len() as isize - 1;
+    let mut first_non_slash_end: isize = -1;
+    let mut end: isize = -1;
+    let mut matched_slash = true;
+    let mut i = len;
+    while i > start {
+        i -= 1;
+        if is_sep(bytes[i]) {
+            if !matched_slash {
+                start = i + 1;
+                break;
+            }
+        } else {
+            if first_non_slash_end == -1 {
+                matched_slash = false;
+                first_non_slash_end = i as isize + 1;
+            }
+            if ext_idx >= 0 {
+                if bytes[i] == suffix_bytes[ext_idx as usize] {
+                    ext_idx -= 1;
+                    if ext_idx == -1 {
+                        end = i as isize;
+                    }
+                } else {
+                    ext_idx = -1;
+                    end = first_non_slash_end;
+                }
+            }
+        }
+    }
+    if start as isize == end {
+        end = first_non_slash_end;
+    } else if end == -1 {
+        end = len as isize;
+    }
+    let end = end as usize;
+    if end <= start {
+        String::new()
+    } else {
+        input[start..end].to_string()
+    }
+}
+
 fn path_win_basename(arguments: &[Value]) -> Result<Value, VmError> {
-    let value = path_arg(arguments, 0)?.trim_end_matches(['\\', '/']);
-    let mut value = value
-        .rsplit(['\\', '/'])
-        .next()
-        .unwrap_or(value)
-        .to_string();
-    if let Some(suffix) = arguments.get(1) {
-        let Value::String(suffix) = suffix else {
+    let input = path_arg(arguments, 0)?;
+    let suffix = match arguments.get(1) {
+        None => None,
+        Some(Value::String(suffix)) => Some(suffix.as_str()),
+        Some(_) => {
             return Err(VmError::Thrown(fs_error(
                 "ERR_INVALID_ARG_TYPE",
                 "suffix must be a string",
-            )));
-        };
-        if value.ends_with(suffix) {
-            value.truncate(value.len() - suffix.len());
+            )))
         }
-    }
+    };
+    let value = path_basename_core(input, suffix, true);
     Ok(Value::String(value.into()))
 }
 
