@@ -158,6 +158,76 @@ fn sd_hex_encode(bytes: &[u8]) -> String {
     out
 }
 
+/// Node-compatible UTF-8 streaming decoder. Returns the decoded text and any
+/// incomplete trailing byte sequence to carry into the next write. Invalid
+/// byte sequences are replaced with U+FFFD, advancing byte-by-byte so that a
+/// bad lead byte does not swallow a following valid continuation.
+fn decode_utf8_stream(bytes: &[u8]) -> (String, Vec<u8>) {
+    fn char_len(lead: u8) -> usize {
+        match lead {
+            0x00..=0x7f => 1,
+            0xc0..=0xdf => 2,
+            0xe0..=0xef => 3,
+            0xf0..=0xf7 => 4,
+            _ => 0,
+        }
+    }
+    fn payload(lead: u8) -> u8 {
+        match lead {
+            0xc0..=0xdf => lead & 0x1f,
+            0xe0..=0xef => lead & 0x0f,
+            0xf0..=0xf7 => lead & 0x07,
+            _ => 0,
+        }
+    }
+    let mut out = String::new();
+    let mut i = 0usize;
+    let len = bytes.len();
+    while i < len {
+        let lead = bytes[i];
+        let clen = char_len(lead);
+        if clen == 1 {
+            out.push(lead as char);
+            i += 1;
+            continue;
+        }
+        if clen == 0 {
+            out.push('�');
+            i += 1;
+            continue;
+        }
+        // Count contiguous valid continuation bytes after the lead.
+        let mut has = 0usize;
+        while i + 1 + has < len && bytes[i + 1 + has] & 0xc0 == 0x80 {
+            has += 1;
+        }
+        if has < clen - 1 {
+            if i + 1 + has >= len {
+                // Buffer ran out mid-sequence: carry to the next write.
+                return (out, bytes[i..].to_vec());
+            }
+            // A non-continuation byte interrupted: the lead plus its collected
+            // continuation bytes form one invalid unit (Node/V8 rule).
+            out.push('�');
+            i += 1 + has;
+            continue;
+        }
+        let mut cp = payload(lead) as u32;
+        for k in 1..clen {
+            cp = (cp << 6) | (bytes[i + k] as u32 & 0x3f);
+        }
+        if let Some(ch) = char::from_u32(cp) {
+            out.push(ch);
+            i += clen;
+        } else {
+            // Overlong / surrogate / out-of-range sequence.
+            out.push('�');
+            i += 1;
+        }
+    }
+    (out, Vec::new())
+}
+
 fn string_decoder_write(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = receiver.ok_or(VmError::NotCallable)?;
     let input = arguments.first().ok_or(VmError::NotCallable)?;
@@ -228,17 +298,8 @@ fn string_decoder_write(receiver: Option<&Value>, arguments: &[Value]) -> Result
             Vec::new(),
         )
     } else {
-        match String::from_utf8(bytes.clone()) {
-            Ok(text) => (Value::String(text.into()), Vec::new()),
-            Err(error) if error.utf8_error().error_len().is_some() => {
-                (Value::String(String::from_utf8_lossy(&bytes).into_owned().into()), Vec::new())
-            }
-            Err(error) => {
-                let valid = error.utf8_error().valid_up_to();
-                let pending = bytes.split_off(valid);
-                (Value::String(String::from_utf8_lossy(&bytes).into_owned().into()), pending)
-            }
-        }
+        let (text, pending) = decode_utf8_stream(&bytes);
+        (Value::String(text.into()), pending)
     };
     let pending = quench_runtime::host_api::array(
         pending
