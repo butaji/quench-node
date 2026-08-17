@@ -86,7 +86,9 @@ fn require_stream_http_modules(name: &str) -> Option<Value> {
                 Value::object(vec![("readableEnded".into(), Value::Boolean(false))]),
             );
             let promises = stream_promises_module();
-            let writable = Value::Builtin(quench_runtime::ops::Builtin::Object);
+            let writable = capability_function(HostCapabilityKind::Custom(
+                CapabilityName::StreamWritable,
+            ));
             return Some(Value::object(vec![
                 ("Stream".into(), stream),
                 (

@@ -226,6 +226,16 @@ impl QuenchNodeHost {
             "isPaused",
             capability_function(HostCapabilityKind::Custom(CapabilityName::StreamIsPaused)),
         );
+        stream = quench_runtime::execute::set_property(
+            stream,
+            "cork",
+            capability_function(HostCapabilityKind::Custom(CapabilityName::StreamIsPaused)),
+        );
+        stream = quench_runtime::execute::set_property(
+            stream,
+            "uncork",
+            capability_function(HostCapabilityKind::Custom(CapabilityName::StreamIsPaused)),
+        );
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::StreamDuplex) {
             stream = quench_runtime::execute::set_property(
                 stream,
