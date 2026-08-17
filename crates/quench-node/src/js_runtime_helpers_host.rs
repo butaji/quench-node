@@ -160,6 +160,12 @@ fn fixture_common_path(path: &str) -> std::borrow::Cow<'_, str> {
 
 fn string_or_bytes(value: Option<&Value>) -> Result<Vec<u8>, VmError> {
     match value {
+        Some(Value::String(value)) if is_symbol_representation(value) => {
+            Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "value must be a string or Buffer",
+            )))
+        }
         Some(Value::String(value)) => Ok(value.as_bytes().to_vec()),
         Some(Value::StringUnits(units)) => Ok(String::from_utf16(&units)
             .unwrap_or_default()
