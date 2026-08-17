@@ -401,6 +401,10 @@ impl CapabilityName {
     const CommonMustNotCall: u16 = 1702;
     const CommonGetArrayBufferViews: u16 = 1703;
     const CommonCanSymlink: u16 = 1704;
+    const CommonExpectsError: u16 = 1707;
+    const CommonExpectsErrorCheck: u16 = 1708;
+    const CommonPlatformTimeout: u16 = 1709;
+    const CommonGetPort: u16 = 1710;
     const CommonWrapperFirst: u16 = 1800;
     const PathRelative: u16 = 1300;
     const PathDirname: u16 = 1301;

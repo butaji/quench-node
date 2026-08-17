@@ -236,7 +236,39 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("hasIntl".into(), Value::Boolean(false)),
                 ("hasInspector".into(), Value::Boolean(false)),
                 ("hasSQLite".into(), Value::Boolean(false)),
+                ("hasIPv6".into(), Value::Boolean(true)),
                 ("PORT".into(), Value::Number(0.0)),
+                ("getPort".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CommonGetPort,
+                    ))),
+                (
+                    "expectsError".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CommonExpectsError,
+                    )),
+                ),
+                (
+                    "platformTimeout".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CommonPlatformTimeout,
+                    )),
+                ),
+                ("isWindows".into(), Value::Boolean(false)),
+                ("isLinux".into(), Value::Boolean(false)),
+                ("isMacOS".into(), Value::Boolean(false)),
+                ("isAIX".into(), Value::Boolean(false)),
+                ("isFreeBSD".into(), Value::Boolean(false)),
+                ("isOpenBSD".into(), Value::Boolean(false)),
+                ("isSunOS".into(), Value::Boolean(false)),
+                ("noop".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CommonMustNotCall,
+                    ))),
+                ("allowGlobals".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CommonMustNotCall,
+                    ))),
                 (
                     "skip".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::CommonSkip)),

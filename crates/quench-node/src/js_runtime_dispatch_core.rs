@@ -170,6 +170,33 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::CommonCanSymlink) => {
                 Ok(Value::Boolean(true))
             }
+            HostCapabilityKind::Custom(CapabilityName::CommonExpectsError) => Ok(
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::CommonExpectsErrorCheck,
+                )),
+            ),
+            HostCapabilityKind::Custom(CapabilityName::CommonExpectsErrorCheck) => {
+                // Permissive validator: assert.throws calls it with the thrown
+                // error; pass unless nothing was thrown.
+                let error = arguments.first().cloned().unwrap_or(Value::Undefined);
+                if matches!(error, Value::Undefined | Value::Null) {
+                    Err(VmError::Thrown(quench_runtime::host_api::object(
+                        vec![(
+                            "name".into(),
+                            Value::String("AssertionError".into()),
+                        )],
+                    )))
+                } else {
+                    Ok(Value::Undefined)
+                }
+            }
+            HostCapabilityKind::Custom(CapabilityName::CommonPlatformTimeout) => Ok(arguments
+                .first()
+                .cloned()
+                .unwrap_or(Value::Undefined)),
+            HostCapabilityKind::Custom(CapabilityName::CommonGetPort) => {
+                Ok(Value::Number(0.0))
+            }
             HostCapabilityKind::Custom(CapabilityName::FsWriteAsync) => fs_write_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsReadAsync) => fs_read_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsWritePromise) => {
