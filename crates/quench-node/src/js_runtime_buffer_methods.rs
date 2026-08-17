@@ -24,7 +24,18 @@ fn buffer_to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     };
     if !matches!(
         encoding.as_str(),
-        "utf8" | "utf-8" | "hex" | "base64" | "base64url" | "ascii" | "utf16le" | "utf-16le"
+        "utf8"
+            | "utf-8"
+            | "hex"
+            | "base64"
+            | "base64url"
+            | "ascii"
+            | "latin1"
+            | "binary"
+            | "ucs2"
+            | "ucs-2"
+            | "utf16le"
+            | "utf-16le"
     ) {
         return Err(VmError::Thrown(fs_error(
             "ERR_UNKNOWN_ENCODING",
@@ -79,6 +90,18 @@ fn buffer_to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
                 .collect::<String>()
                 .into(),
         ));
+    }
+    if encoding == "latin1" || encoding == "binary" {
+        return Ok(Value::String(
+            bytes.iter().map(|byte| char::from(*byte)).collect::<String>().into(),
+        ));
+    }
+    if encoding == "ucs2" || encoding == "ucs-2" {
+        let values = bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        return Ok(Value::String(String::from_utf16_lossy(&values).into()));
     }
     if encoding == "utf16le" || encoding == "utf-16le" {
         let values = bytes

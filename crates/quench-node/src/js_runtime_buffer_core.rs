@@ -123,7 +123,11 @@ fn buffer_from(arguments: &[Value]) -> Result<Value, VmError> {
             match encoding.as_str() {
                 "ascii" | "latin1" | "binary" => Ok(node_buffer(&value.chars().map(|character| character as u32 as u8).collect::<Vec<_>>())),
                 "utf16le" | "utf-16le" | "ucs2" | "ucs-2" => Ok(node_buffer(&value.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<_>>())),
-                "utf8" | "utf-8" | "hex" | "base64" | "base64url" => Ok(node_buffer(value.as_bytes())),
+                "base64" => Ok(node_buffer(&base64_decode(value)?)),
+                "base64url" => Ok(node_buffer(&base64_decode(
+                    &value.replace('-', "+").replace('_', "/"),
+                )?)),
+                "utf8" | "utf-8" | "hex" => Ok(node_buffer(value.as_bytes())),
                 _ => Err(VmError::Thrown(fs_error("ERR_UNKNOWN_ENCODING", "Unknown encoding"))),
             }
         }
