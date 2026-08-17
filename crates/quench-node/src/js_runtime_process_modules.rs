@@ -357,3 +357,40 @@ fn is_process_builtin(id: &str) -> bool {
             | "v8" | "worker_threads"
     )
 }
+
+/// Node `process.umask()`: no argument returns the current process umask; a
+/// numeric (or octal-string) argument sets the OS umask and returns the
+/// previous value.
+fn process_umask(arguments: &[Value]) -> Result<Value, VmError> {
+    // Read the current umask without a durable side effect.
+    let current = unsafe { libc::umask(0) };
+    let _ = unsafe { libc::umask(current) };
+    match arguments.first() {
+        None => Ok(Value::Number((current as u32 & 0o777) as f64)),
+        Some(Value::Number(mask)) => {
+            let previous = unsafe { libc::umask(*mask as libc::mode_t & 0o777) };
+            Ok(Value::Number((previous as u32 & 0o777) as f64))
+        }
+        Some(Value::String(mask)) => {
+            let value = mask.trim_start_matches("0o").trim_start_matches('0');
+            let mask = u32::from_str_radix(value, 8).map_err(|_| {
+                VmError::Thrown(fs_error(
+                    "ERR_INVALID_ARG_TYPE",
+                    "The \"mask\" argument must be an integer or an octal string.",
+                ))
+            })?;
+            if mask > 0o777 {
+                return Err(VmError::Thrown(fs_error(
+                    "ERR_OUT_OF_RANGE",
+                    "The \"mask\" argument must be within the range 0o000 to 0o777",
+                )));
+            }
+            let previous = unsafe { libc::umask(mask as libc::mode_t) };
+            Ok(Value::Number((previous as u32 & 0o777) as f64))
+        }
+        Some(_) => Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "The \"mask\" argument must be an integer or an octal string.",
+        ))),
+    }
+}

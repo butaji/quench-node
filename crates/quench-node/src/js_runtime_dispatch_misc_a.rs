@@ -9,7 +9,7 @@ impl QuenchNodeHost {
             match capability.kind {
             HostCapabilityKind::Custom(CapabilityName::ConsoleLog) => console_log(arguments),
             HostCapabilityKind::Custom(CapabilityName::Cwd) => current_directory(arguments),
-            HostCapabilityKind::Custom(CapabilityName::ProcessUmask) => Ok(Value::Number(0.0)),
+            HostCapabilityKind::Custom(CapabilityName::ProcessUmask) => process_umask(arguments),
             HostCapabilityKind::Custom(CapabilityName::ReadFileSync) => read_file_sync(arguments),
             HostCapabilityKind::Custom(CapabilityName::CreateHash) => self.create_hash(arguments),
             HostCapabilityKind::Custom(CapabilityName::QueueMicrotask) => next_tick(arguments),
