@@ -70,7 +70,7 @@ fn string_decoder_constructor(
     let normalized = encoding.to_ascii_lowercase().replace('-', "");
     if !matches!(
         normalized.as_str(),
-        "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii"
+        "utf8" | "ucs2" | "utf16le" | "latin1" | "binary" | "ascii" | "base64" | "base64url" | "hex"
     ) {
         return Err(VmError::Thrown(fs_error(
             "ERR_UNKNOWN_ENCODING",
@@ -117,6 +117,47 @@ fn string_decoder_bytes(value: &Value) -> Result<Vec<u8>, VmError> {
     Ok(bytes)
 }
 
+/// Base64-encode raw bytes. When `url` is set, uses the URL-safe alphabet and
+/// omits padding (Node's `base64url`).
+fn sd_base64_encode(bytes: &[u8], url: bool) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    for chunk in bytes.chunks(3) {
+        let a = chunk[0];
+        let b = *chunk.get(1).unwrap_or(&0);
+        let c = *chunk.get(2).unwrap_or(&0);
+        out.push(ALPHABET[(a >> 2) as usize] as char);
+        out.push(ALPHABET[(((a & 3) << 4) | (b >> 4)) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(((b & 15) << 2) | (c >> 6)) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[(c & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    if url {
+        out = out.replace('+', "-").replace('/', "_");
+        while out.ends_with('=') {
+            out.pop();
+        }
+    }
+    out
+}
+
+fn sd_hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 15) as usize] as char);
+    }
+    out
+}
+
 fn string_decoder_write(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = receiver.ok_or(VmError::NotCallable)?;
     let input = arguments.first().ok_or(VmError::NotCallable)?;
@@ -138,7 +179,7 @@ fn string_decoder_write(receiver: Option<&Value>, arguments: &[Value]) -> Result
             _ => None,
         })
         .unwrap_or_else(|| "utf8".into());
-    let (text, pending) = if encoding == "utf16le" || encoding == "ucs2" {
+    let (text_value, pending): (Value, Vec<u8>) = if encoding == "utf16le" || encoding == "ucs2" {
         let mut complete = bytes.len() / 2 * 2;
         if complete >= 2 {
             let last = u16::from_le_bytes([bytes[complete - 2], bytes[complete - 1]]);
@@ -146,37 +187,56 @@ fn string_decoder_write(receiver: Option<&Value>, arguments: &[Value]) -> Result
                 complete -= 2;
             }
         }
-        let text = String::from_utf16_lossy(
-            &bytes[..complete]
-                .chunks_exact(2)
-                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-                .collect::<Vec<_>>(),
-        );
-        (text, bytes[complete..].to_vec())
-    } else if encoding == "latin1" || encoding == "ascii" {
+        let units = bytes[..complete]
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<u16>>();
+        let text_value = if units.iter().any(|unit| (0xd800..=0xdfff).contains(unit)) {
+            Value::StringUnits(Rc::new(units))
+        } else {
+            Value::String(String::from_utf16(&units).unwrap_or_default().into())
+        };
+        (text_value, bytes[complete..].to_vec())
+    } else if encoding == "base64" {
+        let complete = bytes.len() / 3 * 3;
         (
-            bytes
-                .iter()
-                .map(|byte| {
-                    char::from(if encoding == "ascii" {
-                        byte & 0x7f
-                    } else {
-                        *byte
+            Value::String(sd_base64_encode(&bytes[..complete], false).into()),
+            bytes[complete..].to_vec(),
+        )
+    } else if encoding == "base64url" {
+        let complete = bytes.len() / 3 * 3;
+        (
+            Value::String(sd_base64_encode(&bytes[..complete], true).into()),
+            bytes[complete..].to_vec(),
+        )
+    } else if encoding == "hex" {
+        (Value::String(sd_hex_encode(&bytes).into()), Vec::new())
+    } else if encoding == "latin1" || encoding == "binary" || encoding == "ascii" {
+       (
+            Value::String(
+                bytes
+                    .iter()
+                    .map(|byte| {
+                        char::from(if encoding == "ascii" {
+                            byte & 0x7f
+                        } else {
+                            *byte
+                        })
                     })
-                })
-                .collect(),
+                    .collect(),
+            ),
             Vec::new(),
         )
     } else {
         match String::from_utf8(bytes.clone()) {
-            Ok(text) => (text, Vec::new()),
+            Ok(text) => (Value::String(text.into()), Vec::new()),
             Err(error) if error.utf8_error().error_len().is_some() => {
-                (String::from_utf8_lossy(&bytes).into_owned(), Vec::new())
+                (Value::String(String::from_utf8_lossy(&bytes).into_owned().into()), Vec::new())
             }
             Err(error) => {
                 let valid = error.utf8_error().valid_up_to();
                 let pending = bytes.split_off(valid);
-                (String::from_utf8_lossy(&bytes).into_owned(), pending)
+                (Value::String(String::from_utf8_lossy(&bytes).into_owned().into()), pending)
             }
         }
     };
@@ -217,7 +277,7 @@ fn string_decoder_write(receiver: Option<&Value>, arguments: &[Value]) -> Result
         ),
     );
     let _ = quench_runtime::execute::set_property(receiver.clone(), "_pending", pending);
-    Ok(Value::String(text.into()))
+    Ok(text_value)
 }
 
 fn string_decoder_end(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
@@ -238,22 +298,52 @@ fn string_decoder_end(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
             _ => None,
         })
         .unwrap_or_default();
-    let tail = if pending.is_empty() || encoding == "utf16le" || encoding == "ucs2" {
-        String::new()
-    } else {
-        "�".into()
-    };
+    let pending_bytes: Vec<u8> = pending
+        .iter()
+        .filter_map(|value| match value {
+            Value::Number(value) => Some(*value as u8),
+            _ => None,
+        })
+        .collect();
     let _ = quench_runtime::execute::set_property(
         receiver.clone(),
         "_pending",
         quench_runtime::host_api::array(Vec::new()),
     );
-    let prefix = match prefix {
-        Value::String(value) => value,
-        _ => String::new(),
+    let prefix_str = match &prefix {
+        Value::String(value) => Some(value.as_str()),
+        _ => None,
     };
+    if encoding == "utf16le" || encoding == "ucs2" {
+        let mut units: Vec<u16> = prefix_str
+            .map(|value| value.encode_utf16().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let mut i = 0usize;
+        while i + 1 < pending_bytes.len() {
+            units.push(u16::from_le_bytes([pending_bytes[i], pending_bytes[i + 1]]));
+            i += 2;
+        }
+        return Ok(if units.iter().any(|unit| (0xd800..=0xdfff).contains(unit)) {
+            Value::StringUnits(Rc::new(units))
+        } else {
+            Value::String(String::from_utf16(&units).unwrap_or_default().into())
+        });
+    }
+    let tail = if pending_bytes.is_empty() {
+        String::new()
+    } else if encoding == "base64" {
+        sd_base64_encode(&pending_bytes, false)
+    } else if encoding == "base64url" {
+        sd_base64_encode(&pending_bytes, true)
+    } else if encoding == "hex" {
+        sd_hex_encode(&pending_bytes)
+    } else {
+        "�".into()
+    };
+    let prefix = prefix_str.unwrap_or_default();
     Ok(Value::String(format!("{prefix}{tail}").into()))
 }
+
 
 fn string_decoder_text(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let input = arguments.first().ok_or(VmError::NotCallable)?;
