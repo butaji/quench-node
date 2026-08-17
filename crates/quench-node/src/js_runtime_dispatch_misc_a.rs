@@ -14,6 +14,7 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::CreateHash) => self.create_hash(arguments),
             HostCapabilityKind::Custom(CapabilityName::QueueMicrotask) => next_tick(arguments),
             HostCapabilityKind::Custom(CapabilityName::PathRelative) => path_relative(arguments),
+            HostCapabilityKind::Custom(CapabilityName::PathWinRelative) => path_win_relative(arguments),
             HostCapabilityKind::Custom(CapabilityName::PathDirname) => path_dirname(arguments),
             HostCapabilityKind::Custom(CapabilityName::PathWinDirname) => {
                 path_win_dirname(arguments)

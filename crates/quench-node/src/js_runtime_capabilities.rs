@@ -257,6 +257,7 @@ impl CapabilityName {
     const PathWinNormalize: u16 = 2071;
     const PathWinDirname: u16 = 2072;
     const PathWinJoin: u16 = 2073;
+    const PathWinRelative: u16 = 2074;
     const UtilPromisify: u16 = 1950;
     const UtilDeprecate: u16 = 2099;
     const UtilParseEnv: u16 = 2098;

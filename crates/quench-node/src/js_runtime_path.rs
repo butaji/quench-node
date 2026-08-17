@@ -629,41 +629,145 @@ fn path_format(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
     Ok(Value::String(output.into()))
 }
 
+fn win32_relative_str(from_orig: &str, to_orig: &str) -> String {
+    if from_orig == to_orig {
+        return String::new();
+    }
+    let from = from_orig.to_lowercase();
+    let to = to_orig.to_lowercase();
+    if from == to {
+        return String::new();
+    }
+
+    if from_orig.len() != from.len() || to_orig.len() != to.len() {
+        // Case preserved in the originals: compare split components
+        // case-insensitively.
+        let mut from_split: Vec<&str> = from_orig.split('\\').collect();
+        let mut to_split: Vec<&str> = to_orig.split('\\').collect();
+        if from_split.last() == Some(&"") {
+            from_split.pop();
+        }
+        if to_split.last() == Some(&"") {
+            to_split.pop();
+        }
+        let from_len = from_split.len();
+        let to_len = to_split.len();
+        let length = from_len.min(to_len);
+        let mut i = 0usize;
+        while i < length {
+            if from_split[i].to_lowercase() != to_split[i].to_lowercase() {
+                break;
+            }
+            i += 1;
+        }
+        if i == 0 {
+            return to_orig.to_string();
+        } else if i == length {
+            if to_len > length {
+                return to_split[i..].join("\\");
+            }
+            if from_len > length {
+                let mut s = "..\\".repeat(from_len - 1 - i);
+                s.push_str("..");
+                return s;
+            }
+            return String::new();
+        }
+        return format!("{}{}", "..\\".repeat(from_len - i), to_split[i..].join("\\"));
+    }
+
+    let from_bytes = from.as_bytes();
+    let to_bytes = to.as_bytes();
+    let mut from_start = 0usize;
+    while from_start < from.len() && from_bytes[from_start] == b'\\' {
+        from_start += 1;
+    }
+    let mut from_end = from.len();
+    while from_end - 1 > from_start && from_bytes[from_end - 1] == b'\\' {
+        from_end -= 1;
+    }
+    let from_len = from_end - from_start;
+    let mut to_start = 0usize;
+    while to_start < to.len() && to_bytes[to_start] == b'\\' {
+        to_start += 1;
+    }
+    let mut to_end = to.len();
+    while to_end - 1 > to_start && to_bytes[to_end - 1] == b'\\' {
+        to_end -= 1;
+    }
+    let to_len = to_end - to_start;
+
+    let length = from_len.min(to_len);
+    let mut last_common_sep: isize = -1;
+    let mut i = 0usize;
+    while i < length {
+        let from_code = from_bytes[from_start + i];
+        if from_code != to_bytes[to_start + i] {
+            break;
+        }
+        if from_code == b'\\' {
+            last_common_sep = i as isize;
+        }
+        i += 1;
+    }
+
+    if i != length {
+        if last_common_sep == -1 {
+            return to_orig.to_string();
+        }
+    } else {
+        if to_len > length {
+            if to_bytes[to_start + i] == b'\\' {
+                return to_orig[to_start + i + 1..to_end].to_string();
+            }
+            if i == 2 {
+                return to_orig[to_start + i..to_end].to_string();
+            }
+        }
+        if from_len > length {
+            if from_bytes[from_start + i] == b'\\' {
+                last_common_sep = i as isize;
+            } else if i == 2 {
+                last_common_sep = 3;
+            }
+        }
+        if last_common_sep == -1 {
+            last_common_sep = 0;
+        }
+    }
+
+    let mut out = String::new();
+    let start = (from_start as isize + last_common_sep + 1).max(0) as usize;
+    let mut k = start;
+    while k <= from_end {
+        if k == from_end || from_bytes[k] == b'\\' {
+            out.push_str(if out.is_empty() { ".." } else { "\\.." });
+        }
+        k += 1;
+    }
+    let to_common = (to_start as isize + last_common_sep).max(0) as usize;
+    if !out.is_empty() {
+        return format!("{out}{}", &to_orig[to_common..to_end]);
+    }
+    if to_bytes[to_common] == b'\\' {
+        return to_orig[to_common + 1..to_end].to_string();
+    }
+    to_orig[to_common..to_end].to_string()
+}
+
 fn path_relative(arguments: &[Value]) -> Result<Value, VmError> {
     let from = path_arg(arguments, 0)?;
     let to = path_arg(arguments, 1)?;
-    if from.contains('\\') || to.contains('\\') {
-        let from = from.replace('/', "\\");
-        let to = to.replace('/', "\\");
-        let from = from
-            .split('\\')
-            .filter(|part| !part.is_empty())
-            .collect::<Vec<_>>();
-        let to = to
-            .split('\\')
-            .filter(|part| !part.is_empty())
-            .collect::<Vec<_>>();
-        let common = from
-            .iter()
-            .zip(&to)
-            .take_while(|(a, b)| a.eq_ignore_ascii_case(b))
-            .count();
-        let mut result = vec![".."; from.len().saturating_sub(common)];
-        result.extend(to[common..].iter().copied());
-        return Ok(Value::String(result.join("\\")));
-    }
-    let from = from
-        .split('/')
-        .filter(|part| !part.is_empty() && *part != ".")
-        .collect::<Vec<_>>();
-    let to = to
-        .split('/')
-        .filter(|part| !part.is_empty() && *part != ".")
-        .collect::<Vec<_>>();
-    let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
-    let mut result = vec![".."; from.len().saturating_sub(common)];
-    result.extend(to[common..].iter().copied());
-    Ok(Value::String(result.join("/")))
+    Ok(Value::String(posix_relative_str(from, to).into()))
+}
+
+fn path_win_relative(arguments: &[Value]) -> Result<Value, VmError> {
+    let cwd = resolve_cwd();
+    let args_from = &[path_arg(arguments, 0)?.to_string()];
+    let from_orig = win32_resolve_str(&[args_from[0].as_str()], &cwd);
+    let args_to = &[path_arg(arguments, 1)?.to_string()];
+    let to_orig = win32_resolve_str(&[args_to[0].as_str()], &cwd);
+    Ok(Value::String(win32_relative_str(&from_orig, &to_orig).into()))
 }
 
 fn join_path_args(arguments: &[Value]) -> Result<Vec<&str>, VmError> {
@@ -675,6 +779,127 @@ fn join_path_args(arguments: &[Value]) -> Result<Vec<&str>, VmError> {
         }
     }
     Ok(parts)
+}
+
+fn host_cwd() -> String {
+    std::env::current_dir()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| ".".into())
+}
+
+/// `path.resolve` calls `process.cwd()`, which the test suite overrides
+/// (e.g. to `''` to exercise the failure fallback). Prefer the JS function so
+/// the mock is honoured, falling back to the host directory.
+fn resolve_cwd() -> String {
+    let js = NODE_PROCESS_MODULE.with(|current| current.borrow().clone()).and_then(
+        |process| {
+            let cwd_fn = quench_runtime::execute::get_property_result(&process, "cwd").ok()?;
+            match quench_runtime::execute::call(&cwd_fn, &process, &[]) {
+                Ok(Value::String(value)) => Some(value.to_string()),
+                _ => None,
+            }
+        },
+    );
+    js.unwrap_or_else(host_cwd)
+}
+
+fn posix_resolve_str(args: &[&str]) -> String {
+    if args.is_empty() || (args.len() == 1 && (args[0].is_empty() || args[0] == ".")) {
+        let cwd = resolve_cwd();
+        if cwd.starts_with('/') {
+            return cwd;
+        }
+    }
+    let mut resolved = String::new();
+    let mut absolute = false;
+    for name in args.iter().rev() {
+        if name.is_empty() {
+            continue;
+        }
+        resolved = format!("{name}/{resolved}");
+        absolute = name.starts_with('/');
+        if absolute {
+            break;
+        }
+    }
+    if !absolute {
+        let cwd = resolve_cwd();
+        resolved = format!("{cwd}/{resolved}");
+        absolute = cwd.starts_with('/');
+    }
+    let mut normalized = normalize_string(&resolved, !absolute, '/', |c| c == b'/');
+    if normalized.is_empty() && absolute {
+        normalized.clear();
+    }
+    if absolute {
+        format!("/{normalized}")
+    } else if normalized.is_empty() {
+        ".".into()
+    } else {
+        normalized
+    }
+}
+
+fn posix_relative_str(from: &str, to: &str) -> String {
+    if from == to {
+        return String::new();
+    }
+    let from = posix_resolve_str(&[from]);
+    let to = posix_resolve_str(&[to]);
+    if from == to {
+        return String::new();
+    }
+    let from_bytes = from.as_bytes();
+    let to_bytes = to.as_bytes();
+    let from_start = 1usize;
+    let from_end = from.len();
+    let from_len = from_end - from_start;
+    let to_start = 1usize;
+    let to_len = to.len() - to_start;
+
+    let length = from_len.min(to_len);
+    let mut last_common_sep: isize = -1;
+    let mut i = 0usize;
+    while i < length {
+        let from_code = from_bytes[from_start + i];
+        if from_code != to_bytes[to_start + i] {
+            break;
+        }
+        if from_code == b'/' {
+            last_common_sep = i as isize;
+        }
+        i += 1;
+    }
+    if i == length {
+        if to_len > length {
+            if to_bytes[to_start + i] == b'/' {
+                return to[to_start + i + 1..].to_string();
+            }
+            if i == 0 {
+                return to[to_start + i..].to_string();
+            }
+        } else if from_len > length {
+            if from_bytes[from_start + i] == b'/' {
+                last_common_sep = i as isize;
+            } else if i == 0 {
+                last_common_sep = 0;
+            }
+        }
+    }
+
+    let mut out = String::new();
+    let start = from_start as isize + last_common_sep + 1;
+    let start = start.max(0) as usize;
+    let mut k = start;
+    while k <= from_end {
+        if k == from_end || from_bytes[k] == b'/' {
+            out.push_str(if out.is_empty() { ".." } else { "/.." });
+        }
+        k += 1;
+    }
+    let to_common = (to_start as isize + last_common_sep).max(0) as usize;
+    out.push_str(&to[to_common..]);
+    out
 }
 
 fn path_join(arguments: &[Value]) -> Result<Value, VmError> {
@@ -957,54 +1182,150 @@ fn path_matches_glob(arguments: &[Value], win32: bool) -> Result<Value, VmError>
     Ok(Value::Boolean(matched))
 }
 
-fn path_resolve(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
-    let separator = if win32 { '\\' } else { '/' };
-    let mut result = String::new();
-    for argument in arguments {
-        let value = path_arg(std::slice::from_ref(argument), 0)?;
-        if win32 && value.len() > 2 && value.as_bytes()[1] == b':' {
-            result = value.to_string();
-            continue;
-        }
-        if value.starts_with(separator) {
-            result = value.to_string();
-        } else if result.is_empty() {
-            result = value.to_string();
-        } else {
-            result = format!("{}{}{}", result.trim_end_matches(separator), separator, value);
+/// Port of Node's `win32.resolve`. Device and UNC roots are matched on each
+/// argument from the right; drive-relative inputs resolve against the
+/// process cwd (no drive-specific cwd env exists on this host, matching
+/// Node's fallback path).
+fn win32_resolve_str(args: &[&str], cwd: &str) -> String {
+    if args.is_empty() || (args.len() == 1 && (args[0].is_empty() || args[0] == ".")) {
+        if cwd.starts_with(['/', '\\']) {
+            return cwd.replace('/', "\\");
         }
     }
-    if !result.starts_with(separator) && !(win32 && result.len() > 2 && result.as_bytes()[1] == b':')
-    {
-        let cwd = std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .to_string_lossy()
-            .into_owned();
-        result = format!("{}{}{}", cwd, separator, result);
-    }
-    // Normalize the resolved absolute path (collapse `.` / `..` / repeated separators).
-    let normalized = if win32 {
-        result.replace('/', "\\")
-    } else {
-        result.replace('\\', "/")
-    };
-    let absolute =
-        normalized.starts_with(separator) || (win32 && normalized.len() > 2 && normalized.as_bytes()[1] == b':');
-    let mut parts = Vec::new();
-    for part in normalized.split(separator) {
-        match part {
-            "" | "." => {}
-            ".." => {
-                parts.pop();
+
+    let mut resolved_device = String::new();
+    let mut resolved_tail = String::new();
+    let mut resolved_absolute = false;
+
+    let mut i: isize = args.len() as isize - 1;
+    loop {
+        let path_str: String;
+        if i >= 0 {
+            let value = args[i as usize];
+            path_str = value.to_string();
+            if path_str.is_empty() {
+                i -= 1;
+                continue;
             }
-            value => parts.push(value),
+        } else {
+            if resolved_device.is_empty() {
+                path_str = cwd.to_string();
+            } else {
+                path_str = cwd.to_string();
+            }
+        }
+
+        let bytes = path_str.as_bytes();
+        let len = bytes.len();
+        let mut root_end = 0usize;
+        let mut device = String::new();
+        let mut is_absolute = false;
+        let code = bytes[0];
+
+        if len == 1 {
+            if is_windows_path_separator(code) {
+                root_end = 1;
+                is_absolute = true;
+            }
+        } else if is_windows_path_separator(code) {
+            is_absolute = true;
+            if is_windows_path_separator(bytes[1]) {
+                let mut j = 2usize;
+                let mut last = 2usize;
+                while j < len && !is_windows_path_separator(bytes[j]) {
+                    j += 1;
+                }
+                if j < len && j != last {
+                    let first_part = &path_str[last..j];
+                    last = j;
+                    while j < len && is_windows_path_separator(bytes[j]) {
+                        j += 1;
+                    }
+                    if j < len && j != last {
+                        last = j;
+                        while j < len && !is_windows_path_separator(bytes[j]) {
+                            j += 1;
+                        }
+                        if j == len || j != last {
+                            if first_part != "." && first_part != "?" {
+                                device = format!("\\\\{first_part}\\{}", &path_str[last..j]);
+                                root_end = j;
+                            } else {
+                                device = format!("\\\\{first_part}");
+                                root_end = 4;
+                            }
+                        }
+                    }
+                }
+            } else {
+                root_end = 1;
+            }
+        } else if is_windows_device_root(code) && bytes[1] == b':' {
+            device = path_str[..2].to_string();
+            root_end = 2;
+            if len > 2 && is_windows_path_separator(bytes[2]) {
+                is_absolute = true;
+                root_end = 3;
+            }
+        }
+
+        if !device.is_empty() {
+            if !resolved_device.is_empty() {
+                if !device.eq_ignore_ascii_case(&resolved_device) {
+                    i -= 1;
+                    continue;
+                }
+            } else {
+                resolved_device = device;
+            }
+        }
+
+        if resolved_absolute {
+            if !resolved_device.is_empty() {
+                break;
+            }
+        } else {
+            resolved_tail = format!("{}\\{resolved_tail}", &path_str[root_end..]);
+            resolved_absolute = is_absolute;
+            if is_absolute && !resolved_device.is_empty() {
+                break;
+            }
+        }
+        if i < 0 {
+            break;
+        }
+        i -= 1;
+    }
+
+    let mut tail = normalize_string(&resolved_tail, !resolved_absolute, '\\', is_windows_path_separator);
+    if tail.is_empty() && resolved_absolute {
+        tail.clear();
+    }
+    if resolved_absolute {
+        format!("{resolved_device}\\{tail}")
+    } else {
+        let combined = format!("{resolved_device}{tail}");
+        if combined.is_empty() {
+            ".".to_string()
+        } else {
+            combined
         }
     }
-    let mut joined = parts.join(&separator.to_string());
-    if absolute && !(win32 && joined.len() > 1 && joined.as_bytes()[1] == b':') {
-        joined = format!("{separator}{joined}");
+}
+
+fn path_resolve(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
+    let mut names = Vec::new();
+    for argument in arguments {
+        names.push(path_arg(std::slice::from_ref(argument), 0)?.to_string());
     }
-    Ok(Value::String(joined.into()))
+    let cwd = resolve_cwd();
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    let result = if win32 {
+        win32_resolve_str(&names, &cwd)
+    } else {
+        posix_resolve_str(&names)
+    };
+    Ok(Value::String(result.into()))
 }
 
 fn path_win_to_namespaced(arguments: &[Value]) -> Result<Value, VmError> {
