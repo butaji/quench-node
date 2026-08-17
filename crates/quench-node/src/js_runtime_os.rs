@@ -103,6 +103,20 @@ fn os_module() -> Value {
         .with(|current| current.borrow().clone())
         .unwrap_or_else(|| quench_runtime::host_api::object(vec![]));
     module = quench_runtime::execute::set_property(module, "\0env", env);
+    // `os.EOL` is read-only, so assigning to it throws a TypeError in strict
+    // mode (matching Node) while remaining replaceable via defineProperty.
+    if let Ok(redefined) = quench_runtime::execute::define_property(
+        module.clone(),
+        "EOL",
+        quench_runtime::host_api::object(vec![
+            ("value".into(), Value::String("\n".into())),
+            ("writable".into(), Value::Boolean(false)),
+            ("enumerable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]),
+    ) {
+        module = redefined;
+    }
     module
 }
 
