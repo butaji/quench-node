@@ -287,6 +287,12 @@ fn format_number(value: &Value, separators: bool) -> String {
         Value::Number(value) => {
             if value.is_nan() {
                 "NaN".into()
+            } else if value.is_infinite() {
+                if value.is_sign_negative() {
+                    "-Infinity".into()
+                } else {
+                    "Infinity".into()
+                }
             } else if *value == 0.0 && value.is_sign_negative() {
                 "-0".into()
             } else {
@@ -338,8 +344,19 @@ fn separator_string(value: &str, enabled: bool) -> String {
 fn format_integer(value: &Value, separators: bool) -> String {
     match value {
         Value::BigInt(value) => format!("{}n", separator_string(&value.to_string(), separators)),
+        Value::String(value) if is_symbol_representation(value) => "NaN".into(),
         Value::Number(value) if value.is_nan() => "NaN".into(),
-        Value::Number(value) => separator_string(&(*value as i64).to_string(), separators),
+        Value::Number(value) if value.is_infinite() => match value.is_sign_negative() {
+            true => "-Infinity".into(),
+            false => "Infinity".into(),
+        },
+        Value::Number(value) => {
+            if *value == 0.0 && value.is_sign_negative() {
+                "-0".into()
+            } else {
+                separator_string(&(*value as i64).to_string(), separators)
+            }
+        }
         Value::String(value) => value
             .parse::<f64>()
             .map(|number| {
@@ -366,14 +383,20 @@ fn format_inspected(value: &Value) -> String {
                 .unwrap_or("");
             format!("Symbol({name})")
         }
-        Value::Array(values) => format!(
-            "[ {} ]",
-            values
-                .iter()
-                .map(format_inspected)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        Value::Array(values) => {
+            if values.iter().next().is_none() {
+                "[]".into()
+            } else {
+                format!(
+                    "[ {} ]",
+                    values
+                        .iter()
+                        .map(format_inspected)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        }
         Value::ArrayBuffer(buffer) if buffer.shared => {
             let bytes = buffer.bytes.borrow();
             let hex = bytes
@@ -397,7 +420,12 @@ fn format_inspected(value: &Value) -> String {
             ) {
                 format!("[{name}: {message}]")
             } else if let Ok(value) = quench_runtime::execute::get_property_result(value, "foo") {
-                format!("{{ foo: {} }}", format_inspected(&value))
+                let inspected = format_inspected(&value);
+                if inspected == "undefined" {
+                    "{}".into()
+                } else {
+                    format!("{{ foo: {inspected} }}")
+                }
             } else {
                 "{}".into()
             }
