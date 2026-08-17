@@ -1,35 +1,51 @@
+fn fs_read_mode(options: Option<&Value>) -> u32 {
+    options
+        .and_then(|options| {
+            quench_runtime::execute::get_property_result(options, "mode")
+                .ok()
+                .and_then(|value| match value {
+                    Value::Number(value) if value > 0.0 => Some(value as u32 & 0o777),
+                    Value::String(value) => u32::from_str_radix(
+                        value.trim_start_matches("0o").trim_start_matches('0'),
+                        8,
+                    )
+                    .ok()
+                    .map(|value| value & 0o777),
+                    _ => None,
+                })
+        })
+        .unwrap_or(0o666)
+}
+
 fn fs_write_bytes(arguments: &[Value], append: bool) -> Result<Value, VmError> {
     let path = path_value(arguments, 0)?;
     let bytes = match arguments.get(1) {
-        Some(Value::Array(_)) => array_values(arguments.get(1).unwrap())?
-            .into_iter()
-            .map(|value| match value {
-                Value::Number(number) => Ok(number as u8),
-                _ => Err(VmError::EvalError(
-                    "filesystem bytes must be numeric".into(),
-                )),
-            })
-            .collect::<Result<Vec<_>, _>>()?,
-        Some(value) => string_or_bytes(Some(value))?,
+        // `writeFileSync`/`appendFileSync` data must be a string, Buffer,
+        // TypedArray, or DataView; plain arrays and other values are rejected
+        // via string_or_bytes with ERR_INVALID_ARG_TYPE.
+        Some(value) => string_or_bytes(Some(value)).map_err(|_| {
+            VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "The \"data\" argument must be of type string or an instance of Buffer or Uint8Array.",
+            ))
+        })?,
         None => return Err(VmError::NotCallable),
     };
+    use std::io::Write;
+    let mut open_options = std::fs::OpenOptions::new();
+    open_options.create(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut open_options, fs_read_mode(arguments.get(2)));
     if append {
-        use std::io::Write;
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .map_err(|error| VmError::EvalError(error.to_string()))?;
-        file.write_all(&bytes)
-            .map_err(|error| VmError::EvalError(error.to_string()))?;
+        open_options.append(true);
     } else {
-        std::fs::write(&path, &bytes).map_err(|error| VmError::EvalError(error.to_string()))?;
-        #[cfg(unix)]
-        if !append {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, PermissionsExt::from_mode(0o666));
-        }
+        open_options.write(true).truncate(true);
     }
+    let mut file = open_options
+        .open(&path)
+        .map_err(|error| VmError::EvalError(error.to_string()))?;
+    file.write_all(&bytes)
+        .map_err(|error| VmError::EvalError(error.to_string()))?;
     Ok(Value::Undefined)
 }
 
@@ -41,6 +57,7 @@ fn fs_write_options(arguments: &[Value]) -> Result<Value, VmError> {
         Some(Value::String(flag)) if flag == "a"
     );
     let encoding = quench_runtime::execute::get_property_result(options, "encoding").ok();
+    let mode = fs_read_mode(Some(options));
     if let Ok(flush) = quench_runtime::execute::get_property_result(options, "flush") {
         if !matches!(flush, Value::Boolean(_) | Value::Undefined) {
             return Err(VmError::Thrown(fs_error(
@@ -58,18 +75,21 @@ fn fs_write_options(arguments: &[Value]) -> Result<Value, VmError> {
             .filter_map(|index| u8::from_str_radix(&text[index..index + 2], 16).ok())
             .collect();
     }
+    use std::io::Write;
+    let mut open_options = std::fs::OpenOptions::new();
+    open_options.create(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut open_options, mode as u32);
     if append {
-        use std::io::Write;
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .map_err(|error| VmError::EvalError(error.to_string()))?;
-        file.write_all(&bytes)
-            .map_err(|error| VmError::EvalError(error.to_string()))?;
+        open_options.append(true);
     } else {
-        std::fs::write(path, bytes).map_err(|error| VmError::EvalError(error.to_string()))?;
+        open_options.write(true).truncate(true);
     }
+    let mut file = open_options
+        .open(path)
+        .map_err(|error| VmError::EvalError(error.to_string()))?;
+    file.write_all(&bytes)
+        .map_err(|error| VmError::EvalError(error.to_string()))?;
     Ok(Value::Undefined)
 }
 
