@@ -97,6 +97,76 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             ),
         ]));
     }
+    if name == "v8" || name == "node:v8" {
+        let serialize =
+            capability_function(HostCapabilityKind::Custom(CapabilityName::V8Serialize));
+        let deserialize =
+            capability_function(HostCapabilityKind::Custom(CapabilityName::V8Deserialize));
+        let throw_snapshot =
+            capability_function(HostCapabilityKind::Custom(CapabilityName::V8StartupSnapshotThrows));
+        let startup_snapshot = quench_runtime::host_api::object(vec![
+            (
+                "isBuildingSnapshot".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::V8StartupSnapshotIsBuilding,
+                )),
+            ),
+            ("addSerializeCallback".into(), throw_snapshot.clone()),
+            ("addDeserializeCallback".into(), throw_snapshot.clone()),
+            ("setDeserializeMainFunction".into(), throw_snapshot),
+        ]);
+        return Ok(quench_runtime::host_api::object(vec![
+            (
+                "setFlagsFromString".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::V8SetFlags)),
+            ),
+            (
+                "cachedDataVersionTag".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::V8CachedDataVersionTag,
+                )),
+            ),
+            (
+                "isStringOneByteRepresentation".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::V8IsStringOneByte)),
+            ),
+            (
+                "getHeapStatistics".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::V8HeapStats)),
+            ),
+            (
+                "getHeapSpaceStatistics".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::V8HeapSpaceStats)),
+            ),
+            (
+                "getHeapCodeStatistics".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::V8HeapCodeStats)),
+            ),
+            (
+                "getHeapSnapshot".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::V8Noop)),
+            ),
+            (
+                "takeCoverage".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::V8Noop)),
+            ),
+            (
+                "stopCoverage".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::V8Noop)),
+            ),
+            (
+                "writeHeapSnapshot".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::V8WriteHeapSnapshot)),
+            ),
+            (
+                "queryObjects".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::V8QueryObjects)),
+            ),
+            ("serialize".into(), serialize),
+            ("deserialize".into(), deserialize),
+            ("startupSnapshot".into(), startup_snapshot),
+        ]));
+    }
     if name == "net" || name == "node:net" {
         return Ok(quench_runtime::host_api::object(vec![
             (

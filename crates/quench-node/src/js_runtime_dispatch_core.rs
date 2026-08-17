@@ -1,5 +1,38 @@
 const DISPATCH_UNHANDLED: &str = "quench-node dispatch: unhandled capability";
 
+/// Monotonic counter behind `v8.cachedDataVersionTag()`, bumped whenever
+/// `v8.setFlagsFromString()` is called. The engine itself is not V8, but the
+/// public contract only requires a number that is stable between flag changes.
+use std::sync::atomic::{AtomicU64, Ordering};
+static V8_FLAG_VERSION: AtomicU64 = AtomicU64::new(0);
+
+/// Build a Node-style thrown error value carrying the standard `name`, `code`,
+/// and `message` properties so `assert.throws`/`assert.rejects` validators and
+/// `ERR_*` checks observe the same shape Node exposes.
+fn thrown_js_error(name: &str, code: &str, message: &str) -> VmError {
+    VmError::Thrown(quench_runtime::host_api::object(vec![
+        ("name".into(), Value::String(name.into())),
+        ("code".into(), Value::String(code.into())),
+        ("message".into(), Value::String(message.into())),
+    ]))
+}
+
+fn invalid_string_arg_error(argument_name: &str) -> VmError {
+    thrown_js_error(
+        "TypeError",
+        "ERR_INVALID_ARG_TYPE",
+        &format!("The \"{argument_name}\" argument must be of type string."),
+    )
+}
+
+/// The runtime stores symbol primitives as sentinel strings of the form
+/// `"Symbol.<tag>\0"`. Mirror the engine's own symbol-string heuristic so a
+/// symbol is not mistaken for a genuine string when a string-only argument is
+/// validated.
+fn is_symbol_representation(value: &str) -> bool {
+    value.starts_with("Symbol.") && value.contains('\0')
+}
+
 impl QuenchNodeHost {
     fn dispatch_core(
         &self,
@@ -196,6 +229,123 @@ impl QuenchNodeHost {
                 .unwrap_or(Value::Undefined)),
             HostCapabilityKind::Custom(CapabilityName::CommonGetPort) => {
                 Ok(Value::Number(0.0))
+            }
+            HostCapabilityKind::Custom(CapabilityName::V8Noop) => Ok(Value::Undefined),
+            HostCapabilityKind::Custom(CapabilityName::V8QueryObjects) => {
+                Ok(quench_runtime::host_api::array(Vec::new()))
+            }
+            HostCapabilityKind::Custom(CapabilityName::V8SetFlags) => match arguments.first() {
+                Some(Value::String(_) | Value::StringUnits(_)) => {
+                    V8_FLAG_VERSION.fetch_add(1, Ordering::SeqCst);
+                    Ok(Value::Undefined)
+                }
+                _ => Err(invalid_string_arg_error("flags")),
+            },
+            HostCapabilityKind::Custom(CapabilityName::V8CachedDataVersionTag) => {
+                Ok(Value::Number(V8_FLAG_VERSION.load(Ordering::SeqCst) as f64))
+            }
+            HostCapabilityKind::Custom(CapabilityName::V8IsStringOneByte) => {
+                match arguments.first() {
+                    Some(Value::String(content)) if is_symbol_representation(content) => {
+                        Err(invalid_string_arg_error("content"))
+                    }
+                    Some(Value::String(content)) => {
+                        Ok(Value::Boolean(content.chars().all(|c| (c as u32) < 0x100)))
+                    }
+                    Some(Value::StringUnits(units)) => {
+                        Ok(Value::Boolean(units.iter().all(|&unit| unit < 0x100)))
+                    }
+                    _ => Err(invalid_string_arg_error("content")),
+                }
+            }
+            HostCapabilityKind::Custom(CapabilityName::V8StartupSnapshotIsBuilding) => {
+                Ok(Value::Boolean(false))
+            }
+            HostCapabilityKind::Custom(CapabilityName::V8StartupSnapshotThrows) => Err(
+                thrown_js_error(
+                    "Error",
+                    "ERR_NOT_BUILDING_SNAPSHOT",
+                    "Cannot access this API while not building a snapshot.",
+                ),
+            ),
+            HostCapabilityKind::Custom(CapabilityName::V8WriteHeapSnapshot) => {
+                Err(thrown_js_error(
+                    "Error",
+                    "ERR_V8_NOT_SUPPORTED",
+                    "Writing heap snapshots is not supported on this runtime.",
+                ))
+            }
+            HostCapabilityKind::Custom(CapabilityName::V8HeapStats) => Ok(
+                quench_runtime::host_api::object(vec![
+                    ("does_zap_garbage".into(), Value::Number(0.0)),
+                    ("external_memory".into(), Value::Number(0.0)),
+                    ("heap_size_limit".into(), Value::Number(0.0)),
+                    ("malloced_memory".into(), Value::Number(0.0)),
+                    ("number_of_detached_contexts".into(), Value::Number(0.0)),
+                    ("number_of_native_contexts".into(), Value::Number(0.0)),
+                    ("peak_malloced_memory".into(), Value::Number(0.0)),
+                    ("total_allocated_bytes".into(), Value::Number(0.0)),
+                    ("total_available_size".into(), Value::Number(0.0)),
+                    ("total_global_handles_size".into(), Value::Number(0.0)),
+                    ("total_heap_size".into(), Value::Number(0.0)),
+                    ("total_heap_size_executable".into(), Value::Number(0.0)),
+                    ("total_physical_size".into(), Value::Number(0.0)),
+                    ("used_global_handles_size".into(), Value::Number(0.0)),
+                    ("used_heap_size".into(), Value::Number(0.0)),
+                ]),
+            ),
+            HostCapabilityKind::Custom(CapabilityName::V8HeapCodeStats) => Ok(
+                quench_runtime::host_api::object(vec![
+                    ("bytecode_and_metadata_size".into(), Value::Number(0.0)),
+                    ("code_and_metadata_size".into(), Value::Number(0.0)),
+                    ("cpu_profiler_metadata_size".into(), Value::Number(0.0)),
+                    ("external_script_source_size".into(), Value::Number(0.0)),
+                ]),
+            ),
+            HostCapabilityKind::Custom(CapabilityName::V8HeapSpaceStats) => {
+                let names = [
+                    "code_large_object_space",
+                    "code_space",
+                    "large_object_space",
+                    "new_large_object_space",
+                    "new_space",
+                    "old_space",
+                    "read_only_space",
+                    "shared_large_object_space",
+                    "shared_space",
+                    "shared_trusted_large_object_space",
+                    "shared_trusted_space",
+                    "trusted_large_object_space",
+                    "trusted_space",
+                ];
+                let spaces = names
+                    .iter()
+                    .map(|name| {
+                        quench_runtime::host_api::object(vec![
+                            ("space_name".into(), Value::String((*name).into())),
+                            ("space_size".into(), Value::Number(0.0)),
+                            ("space_used_size".into(), Value::Number(0.0)),
+                            ("space_available_size".into(), Value::Number(0.0)),
+                            ("physical_space_size".into(), Value::Number(0.0)),
+                        ])
+                    })
+                    .collect();
+                Ok(quench_runtime::host_api::array(spaces))
+            }
+            HostCapabilityKind::Custom(CapabilityName::V8Serialize) => {
+                Ok(quench_runtime::host_api::object(vec![(
+                    "data".into(),
+                    arguments.first().cloned().unwrap_or(Value::Undefined),
+                )]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::V8Deserialize) => {
+                let value = arguments
+                    .first()
+                    .and_then(|argument| {
+                        quench_runtime::execute::get_property_result(argument, "data").ok()
+                    })
+                    .unwrap_or(Value::Undefined);
+                Ok(value)
             }
             HostCapabilityKind::Custom(CapabilityName::FsWriteAsync) => fs_write_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsReadAsync) => fs_read_async(arguments),
