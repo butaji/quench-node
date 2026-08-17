@@ -3,6 +3,7 @@
 rustflags = ["-D", "warnings"]
 
 [profile.dev]
+debug = 0
 opt-level = 0
 
 [profile.release]
