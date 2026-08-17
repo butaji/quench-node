@@ -95,22 +95,44 @@ fn read_file_sync(arguments: &[Value]) -> Result<Value, VmError> {
         },
         _ => None,
     };
-    if matches!(encoding.as_deref(), Some("utf8")) {
-        return String::from_utf8(bytes)
-            .map(Value::String)
-            .map_err(|error| VmError::EvalError(error.to_string()));
+    if let Some(encoding) = encoding.map(|value| value.to_ascii_lowercase().replace('-', "")) {
+        let text = read_file_string(&bytes, &encoding)?;
+        return Ok(Value::String(text.into()));
     }
-    match encoding.as_deref() {
-        Some("hex") => Ok(Value::String(
-            bytes
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>()
-                .into(),
-        )),
-        Some("base64") => Ok(Value::String(base64_encode(&bytes).into())),
-        _ => Ok(node_buffer(&bytes)),
-    }
+    Ok(node_buffer(&bytes))
+}
+
+/// Decode file bytes to a string for a normalized (lowercase, no dashes)
+/// Node encoding name. Throws `ERR_INVALID_ARG_VALUE` for an unknown name.
+fn read_file_string(bytes: &[u8], encoding: &str) -> Result<String, VmError> {
+    let text = match encoding {
+        "utf8" => String::from_utf8_lossy(bytes).into_owned(),
+        "utf16le" | "ucs2" => {
+            let complete = bytes.len() / 2 * 2;
+            String::from_utf16_lossy(
+                &bytes[..complete]
+                    .chunks_exact(2)
+                    .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                    .collect::<Vec<_>>(),
+            )
+        }
+        "ascii" => bytes.iter().map(|byte| char::from(byte & 0x7f)).collect(),
+        "latin1" | "binary" => bytes.iter().map(|byte| char::from(*byte)).collect(),
+        "hex" => bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>(),
+        "base64" => base64_encode(bytes),
+        "base64url" => base64_encode(bytes).replace('+', "-").replace('/', "_").trim_end_matches('=')
+            .to_string(),
+        _ => {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_VALUE",
+                &format!("The argument 'encoding' must be a string or Buffer. Received {encoding}"),
+            )))
+        }
+    };
+    Ok(text)
 }
 
 fn fixture_common_path(path: &str) -> std::borrow::Cow<'_, str> {
