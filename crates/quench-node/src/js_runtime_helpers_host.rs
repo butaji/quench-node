@@ -161,6 +161,10 @@ fn fixture_common_path(path: &str) -> std::borrow::Cow<'_, str> {
 fn string_or_bytes(value: Option<&Value>) -> Result<Vec<u8>, VmError> {
     match value {
         Some(Value::String(value)) => Ok(value.as_bytes().to_vec()),
+        Some(Value::StringUnits(units)) => Ok(String::from_utf16(&units)
+            .unwrap_or_default()
+            .as_bytes()
+            .to_vec()),
         Some(Value::Uint8Array(view)) => Ok(view.buffer.bytes.borrow()
             [view.byte_offset..view.byte_offset + view.length]
             .to_vec()),
