@@ -423,6 +423,103 @@ fn buffer_is_utf8(arguments: &[Value]) -> Result<Value, VmError> {
     ))
 }
 
+const BASE64_ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+fn quench_base64_encode(input: &[u8]) -> String {
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        out.push(BASE64_ALPHABET[(b0 >> 2) as usize] as char);
+        out.push(BASE64_ALPHABET[((b0 << 4 | b1 >> 4) & 0x3f) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            BASE64_ALPHABET[((b1 << 2 | b2 >> 6) & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            BASE64_ALPHABET[(b2 & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+fn base64_decode(input: &str) -> Result<Vec<u8>, VmError> {
+    let mut values = Vec::with_capacity(input.len());
+    for byte in input.bytes() {
+        if byte == b'=' || byte.is_ascii_whitespace() {
+            continue;
+        }
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => {
+                return Err(VmError::Thrown(fs_error(
+                    "ERR_INVALID_ARG_TYPE",
+                    "The first argument must be a valid base64 string",
+                )))
+            }
+        };
+        values.push(value);
+    }
+    let mut out = Vec::with_capacity(values.len() * 3 / 4);
+    for chunk in values.chunks(4) {
+        let quadruple = [
+            *chunk.first().unwrap_or(&0),
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+            *chunk.get(3).unwrap_or(&0),
+        ];
+        out.push((quadruple[0] << 2 | quadruple[1] >> 4) as u8);
+        if chunk.len() > 2 {
+            out.push((quadruple[1] << 4 | quadruple[2] >> 2) as u8);
+        }
+        if chunk.len() > 3 {
+            out.push((quadruple[2] << 6 | quadruple[3]) as u8);
+        }
+    }
+    Ok(out)
+}
+
+fn buffer_atob(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(input)) = arguments.first() else {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "atob expects a string",
+        )));
+    };
+    let decoded = base64_decode(input)?;
+    Ok(Value::String(
+        decoded.iter().map(|byte| *byte as char).collect::<String>().into(),
+    ))
+}
+
+fn buffer_btoa(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(input)) = arguments.first() else {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "btoa expects a string",
+        )));
+    };
+    let mut bytes = Vec::with_capacity(input.len());
+    for ch in input.chars() {
+        if ch as u32 > 0xff {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "The string to be encoded contains characters outside of the Latin1 range",
+            )));
+        }
+        bytes.push(ch as u8);
+    }
+    Ok(Value::String(quench_base64_encode(&bytes).into()))
+}
+
 fn text_encoder_constructor() -> Result<Value, VmError> {
     Ok(quench_runtime::host_api::object(vec![(
         "encode".into(),

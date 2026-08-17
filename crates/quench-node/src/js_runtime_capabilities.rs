@@ -115,6 +115,8 @@ impl CapabilityName {
     const NetCreateServer: u16 = 2129;
     const FsGlob: u16 = 2350;
     const FsGlobSync: u16 = 2351;
+    const BufferAtob: u16 = 2352;
+    const BufferBtoa: u16 = 2353;
     const UtilGetCallSites: u16 = 2124;
     const VmCompileFunction: u16 = 2119;
     const VmCompiledFunction: u16 = 2120;

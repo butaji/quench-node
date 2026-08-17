@@ -311,6 +311,14 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "isUtf8".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::BufferIsUtf8)),
                 ),
+                (
+                    "atob".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::BufferAtob)),
+                ),
+                (
+                    "btoa".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::BufferBtoa)),
+                ),
             ]);
             return Ok(quench_runtime::execute::call(
                 &Value::Builtin(quench_runtime::ops::Builtin::ObjectDefineProperty),

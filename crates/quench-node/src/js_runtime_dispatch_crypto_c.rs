@@ -447,6 +447,8 @@ impl QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::BufferIsAscii) => buffer_is_ascii(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferIsUtf8) => buffer_is_utf8(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferAtob) => buffer_atob(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferBtoa) => buffer_btoa(arguments),
             HostCapabilityKind::Custom(CapabilityName::TextEncoderConstructor) => {
                 text_encoder_constructor()
             }
