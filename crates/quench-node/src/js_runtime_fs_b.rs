@@ -17,6 +17,32 @@ fn fs_read_mode(options: Option<&Value>) -> u32 {
         .unwrap_or(0o666)
 }
 
+/// Decode string data bytes for a normalized Node encoding option (hex,
+/// base64, base64url). Fs callbacks use this when { encoding } is supplied.
+fn fs_decode_data(bytes: Vec<u8>, encoding: &str) -> Result<Vec<u8>, VmError> {
+    match encoding {
+        "hex" => {
+            let text = String::from_utf8_lossy(&bytes);
+            if text.len() % 2 != 0 {
+                return Err(VmError::EvalError("invalid hex input".into()));
+            }
+            (0..text.len())
+                .step_by(2)
+                .map(|index| {
+                    u8::from_str_radix(&text[index..index + 2], 16)
+                        .map_err(|_| VmError::EvalError("invalid hex input".into()))
+                })
+                .collect()
+        }
+        "base64" => base64_decode(&String::from_utf8_lossy(&bytes)),
+        "base64url" => {
+            let text = String::from_utf8_lossy(&bytes).replace('-', "+").replace('_', "/");
+            base64_decode(&text)
+        }
+        _ => Ok(bytes),
+    }
+}
+
 fn fs_write_bytes(arguments: &[Value], append: bool) -> Result<Value, VmError> {
     let path = path_value(arguments, 0)?;
     let bytes = match arguments.get(1) {
@@ -31,6 +57,24 @@ fn fs_write_bytes(arguments: &[Value], append: bool) -> Result<Value, VmError> {
         })?,
         None => return Err(VmError::NotCallable),
     };
+    let data = if append {
+        if let Some(encoding) = arguments
+            .get(2)
+            .and_then(|options| {
+                quench_runtime::execute::get_property_result(options, "encoding").ok()
+            })
+            .and_then(|value| match value {
+                Value::String(value) => Some(value.to_ascii_lowercase().replace('-', "")),
+                _ => None,
+            })
+        {
+            fs_decode_data(bytes, &encoding)?
+            } else {
+                bytes
+            }
+        } else {
+            bytes
+        };
     use std::io::Write;
     let mut open_options = std::fs::OpenOptions::new();
     open_options.create(true);
@@ -44,7 +88,7 @@ fn fs_write_bytes(arguments: &[Value], append: bool) -> Result<Value, VmError> {
     let mut file = open_options
         .open(&path)
         .map_err(|error| VmError::EvalError(error.to_string()))?;
-    file.write_all(&bytes)
+    file.write_all(&data)
         .map_err(|error| VmError::EvalError(error.to_string()))?;
     Ok(Value::Undefined)
 }
