@@ -17,4 +17,5 @@ run_example() {
 run_example cli-summary.cjs
 run_example crypto-file-summary.cjs
 run_example http-loopback.cjs
+run_example hono-json.cjs
 run_example stream-summary.cjs

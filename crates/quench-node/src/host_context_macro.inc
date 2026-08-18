@@ -121,6 +121,7 @@ macro_rules! run_host_context {
         ctx.globals().set("__quench_fs_link", Func::from(|source: String, destination: String| -> rquickjs::Result<()> { fs::hard_link(source, destination).map_err(|_| rquickjs::Error::new_from_js("fs", "link failed")) }))?;
         ctx.globals().set("__quench_fs_readlink", Func::from(|path: String| -> rquickjs::Result<String> { std::fs::read_link(path).map(|value| value.to_string_lossy().into_owned()).map_err(|_| rquickjs::Error::new_from_js("fs", "readlinkSync failed")) }))?;
         ctx.globals().set("__quench_host_timer_scheduler", true)?;
+        ctx.globals().set("__quench_oxc_resolve", Func::from($crate::host_context::quench_oxc_resolve))?;
         ctx.eval::<(), _>(BOOTSTRAP_SOURCE.as_str().as_bytes()).map_err(|error| { eprintln!("Bootstrap JavaScript exception: {error:?}"); error })?;
         let cli_title = $source.lines().find_map(|line| { line.trim().strip_prefix("// Flags:").and_then(|flags| flags.split_whitespace().find_map(|flag| flag.strip_prefix("--title="))) });
         ctx.globals().set("__quench_cli_title", cli_title)?;

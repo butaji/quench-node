@@ -591,7 +591,11 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         if let Some(value) = empty_module_stub(name) {
             return Ok(value);
         }
-        return Err(VmError::EvalError(format!("Cannot find module '{name}'")));
+        return Err(thrown_js_error(
+            "Error",
+            "MODULE_NOT_FOUND",
+            &format!("Cannot find module '{name}'"),
+        ));
     }
     Ok(path_module())
 }

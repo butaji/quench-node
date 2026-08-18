@@ -34,6 +34,14 @@ const __quenchPackageEntry = (root, subpath) => {
 };
 const __quenchResolvedExtensions = new Map();
 const __quenchPackagePath = (specifier, parent) => {
+  if (typeof globalThis.__quench_oxc_resolve === "function") {
+    try {
+      const resolved = globalThis.__quench_oxc_resolve(specifier, parent);
+      if (typeof resolved === "string" && resolved.length > 0) {
+        return resolved;
+      }
+    } catch (_) {}
+  }
   const normalizedSpecifier = specifier.replace(/\/+$/, "");
   const parts = normalizedSpecifier.startsWith("@")
     ? normalizedSpecifier.split("/").slice(0, 2)

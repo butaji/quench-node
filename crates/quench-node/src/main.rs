@@ -92,7 +92,24 @@ fn run_quench_cli() -> Result<(), Box<dyn std::error::Error>> {
                 .get(mode_index + 1)
                 .map(String::as_str)
                 .unwrap_or("0");
-            run_quench_directory(&PathBuf::from(format!("tests/node-compat/stage-{stage}")))
+            // The npm application gates need node_modules resolution, which
+            // only the full runtime provides (the reduced engine's `require`
+            // knows only builtins). Route just these stages to the full
+            // runtime; every other stage stays on the reduced engine so the
+            // broad stage baseline is untouched.
+            let application_gate = matches!(
+                stage,
+                "2047" | "2069" | "2080" | "2081" | "2104"
+            );
+            if application_gate {
+                run_directory(&PathBuf::from(format!(
+                    "tests/node-compat/stage-{stage}"
+                )))
+            } else {
+                run_quench_directory(&PathBuf::from(format!(
+                    "tests/node-compat/stage-{stage}"
+                )))
+            }
         }
         Some("--test-dir") => {
             let dir = PathBuf::from(
@@ -103,9 +120,13 @@ fn run_quench_cli() -> Result<(), Box<dyn std::error::Error>> {
             run_quench_directory(&dir)
         }
         Some(path) => {
+            // Plain script files run on the full runtime so CommonJS `require`
+            // can reach the JS local loader (node_modules/relative resolution).
+            // Directory modes (--stage/--test-dir) stay on the reduced engine.
             let path = host.resolve_module(path, None)?;
             let source = host.load_module(&path)?;
-            QuenchRuntime.execute(&source, Some(path.as_path()), &host)
+            let runtime = QuickJsRuntime::new()?;
+            runtime.execute(&source, Some(path.as_path()), &host)
         }
         None => QuenchRuntime.execute("", None, &host),
     }

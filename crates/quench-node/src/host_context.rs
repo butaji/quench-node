@@ -1,3 +1,4 @@
+use oxc_resolver::{ResolveOptions, Resolver};
 use std::{
     collections::HashMap,
     ffi::CStr,
@@ -261,5 +262,45 @@ pub(crate) fn quench_dns_reverse(address: String) -> rquickjs::Result<String> {
         .to_str()
         .map(str::to_owned)
         .map_err(|_| rquickjs::Error::new_from_js("dns", "invalid hostname"))
+}
+fn quench_oxc_resolver() -> &'static Resolver {
+    static CACHE: OnceLock<Resolver> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        Resolver::new(ResolveOptions {
+            // CommonJS `require` conditions: match the package `exports`
+            // "require" target (hono/ajv ship a CJS build) before falling back
+            // to "node"/"default", and honor extensionless package lookup with
+            // the CJS-first extension order Node uses.
+            extensions: [".js", ".cjs", ".mjs", ".json", ".node"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            condition_names: ["require", "node", "default"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            main_fields: ["main", "module", "exports"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            ..ResolveOptions::default()
+        })
+    })
+}
+
+/// Node-style CommonJS node_modules lookup via oxc-resolver. Given a bare
+/// specifier and the importing module's absolute path, return the absolute
+/// resolved file path, or `None` when unresolvable. The JS local loader uses
+/// this as the primary package lookup; its hand-rolled walk stays as the
+/// fallback so resolution keeps working even when the crate cannot resolve.
+pub(crate) fn quench_oxc_resolve(specifier: String, parent: String) -> Option<String> {
+    let base = std::path::Path::new(&parent)
+        .parent()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| ".".into());
+    quench_oxc_resolver()
+        .resolve(&base, &specifier)
+        .ok()
+        .map(|resolution| resolution.full_path().to_string_lossy().into_owned())
 }
 include!("host_context_macro.inc");
