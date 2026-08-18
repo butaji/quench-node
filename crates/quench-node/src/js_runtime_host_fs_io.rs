@@ -325,8 +325,14 @@ impl QuenchNodeHost {
     }
 
     fn fs_fstat(&self, arguments: &[Value]) -> Result<Value, VmError> {
-        let Some(Value::Number(fd)) = arguments.first() else {
-            return Err(VmError::NotCallable);
+        let Some(Value::Number(fd)) = arguments
+            .first()
+            .filter(|value| !matches!(value, Value::String(s) if is_symbol_representation(s)))
+        else {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "The \"fd\" argument must be of type number.",
+            )));
         };
         let mode = self
             .fd_modes
