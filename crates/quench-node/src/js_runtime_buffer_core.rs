@@ -290,6 +290,7 @@ fn buffer_is_encoding(arguments: &[Value]) -> Result<Value, VmError> {
         "utf8"
             | "utf-8"
             | "utf16le"
+            | "utf-16le"
             | "ucs2"
             | "ucs-2"
             | "latin1"

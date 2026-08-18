@@ -72,10 +72,16 @@ fn legacy_path_parse(normalized: &str) -> Result<Value, VmError> {
 }
 
 fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::String(value)) = arguments.first() else {
-        return Err(VmError::Thrown(fs_error(
+    let Some(Value::String(value)) = arguments.first().filter(|value| match value {
+        Value::String(text) => !is_symbol_representation(text) && !text.starts_with("Symbol."),
+        _ => false,
+    }) else {
+        return Err(VmError::Thrown(type_error(
             "ERR_INVALID_ARG_TYPE",
-            "url must be a string",
+            &format!(
+                "The \"url\" argument must be of type string.{}",
+                invalid_arg_type_suffix(arguments.first())
+            ),
         )));
     };
     if value.contains("%E0%A4%A") {
@@ -363,6 +369,20 @@ fn legacy_query_parse(value: &str) -> Result<Value, VmError> {
 }
 
 fn url_format_legacy(arguments: &[Value]) -> Result<Value, VmError> {
+    match arguments.first() {
+        Some(Value::String(value))
+            if !is_symbol_representation(value) && !value.starts_with("Symbol.") => {}
+        Some(Value::Object(_) | Value::ObjectAlias(_)) => {}
+        other => {
+            return Err(VmError::Thrown(type_error(
+                "ERR_INVALID_ARG_TYPE",
+                &format!(
+                    "The \"urlObject\" argument must be of type object.{}",
+                    invalid_arg_type_suffix(other)
+                ),
+            )));
+        }
+    }
     if let Some(Value::String(value)) = arguments.first() {
         let mut output = value.clone();
         if let Some(authority_end) = output.find("//").and_then(|start| {
@@ -431,6 +451,9 @@ fn url_format_legacy(arguments: &[Value]) -> Result<Value, VmError> {
             _ => None,
         })
         .unwrap_or_default();
+    if protocol.is_empty() && host.is_empty() && pathname.is_empty() && search.is_empty() {
+        return Ok(Value::String("".into()));
+    }
     Ok(Value::String(
         format!(
             "{}//{}{}{}",

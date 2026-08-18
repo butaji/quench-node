@@ -1081,3 +1081,11 @@ Current pushed increments (2026-08-09):
   survives into `querystring.escape`.
 - Stage 2612 and `test-os-eol.js` pass. Stage 2613 and
   `test-querystring-escape.js` pass.
+
+## 2026-08-18 Buffer.isEncoding and url.format
+
+- `Buffer.isEncoding` accepts `utf-16le`.
+- `url.format` rejects non-string/non-object input (including symbols) with
+  `TypeError` / `ERR_INVALID_ARG_TYPE`, and formats `{}` as `""`.
+- Stage 2614 and `test-buffer-isencoding.js` pass. Stage 2615 and
+  `test-url-format-invalid-input.js` pass.

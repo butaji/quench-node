@@ -127,6 +127,11 @@ fn invalid_arg_type_suffix(value: Option<&Value>) -> String {
             };
             format!(" Received type number ({rendered})")
         }
+        Some(Value::String(value))
+            if is_symbol_representation(value) || value.starts_with("Symbol.") =>
+        {
+            format!(" Received type symbol ({value})")
+        }
         Some(Value::String(value)) => {
             format!(" Received type string ('{value}')")
         }
