@@ -1030,3 +1030,17 @@ Current pushed increments (2026-08-09):
 - The full differential remains open: the latest bounded run processed 4,682
   fixtures with 1,211 matches, 3,471 differences, 2,095 quench failures, and
   134 timeouts. HTTP, net, stream, and fs remain the largest actionable queues.
+
+## 2026-08-17 node:assert host surface
+
+- The reduced-engine `node:assert` host now throws catchable `AssertionError`
+  objects (`ERR_ASSERTION`, `operator`, `actual`, `expected`,
+  `generatedMessage`) instead of string `EvalError`s.
+- Comparison helpers implement `Object.is`, loose `==`, `deepEqual` /
+  `deepStrictEqual`, and `partialDeepStrictEqual` over the engine value kinds.
+- `assert.throws` accepts constructors, validator functions, regular
+  expressions, and property objects. `assert.fail` rethrows Error instances.
+- `assert.ifError` uses Node's `ifError got unwanted exception: …` messages
+  and records `expected: null`.
+- Focused stage 2607 covers the public comparison / throws / fail surface and
+  passes. `test-assert-fail.js` now completes under the host assert path.

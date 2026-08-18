@@ -8,7 +8,7 @@ impl QuenchNodeHost {
             .map(|value| safe_value_string(&value))
             .unwrap_or_else(|| "r".into());
         if let Some(mode) = arguments.get(2) {
-            if !matches!(mode, Value::Number(_)) {
+            if !matches!(mode, Value::Number(_) | Value::Undefined | Value::Null) {
                 return Err(VmError::Thrown(fs_error(
                     "ERR_INVALID_ARG_VALUE",
                     "mode is invalid",

@@ -283,6 +283,8 @@ include!("js_runtime_os.rs");
 
 include!("js_runtime_querystring.rs");
 
+include!("js_runtime_assertions_deep.rs");
+include!("js_runtime_assertions_match.rs");
 include!("js_runtime_assertions.rs");
 
 fn url_identity(value: &Value) -> Option<String> {
@@ -310,7 +312,9 @@ fn drain_scheduled_callbacks() -> Result<(), VmError> {
             continue;
         }
         let callback = NODE_TIMERS.with(|queue| queue.borrow_mut().pop());
-        let Some(callback) = callback else { return Ok(()) };
+        let Some(callback) = callback else {
+            return Ok(());
+        };
         quench_runtime::execute::call(&callback, &Value::Undefined, &[])?;
     }
 }
@@ -451,5 +455,7 @@ fn basename(arguments: &[Value]) -> Result<Value, VmError> {
             )))
         }
     };
-    Ok(Value::String(path_basename_core(path, suffix, false).into()))
+    Ok(Value::String(
+        path_basename_core(path, suffix, false).into(),
+    ))
 }

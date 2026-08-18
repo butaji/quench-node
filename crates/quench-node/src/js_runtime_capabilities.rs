@@ -322,6 +322,9 @@ impl CapabilityName {
     const AssertFail: u16 = 36;
     const AssertDoesNotMatch: u16 = 37;
     const AssertNotDeepEqual: u16 = 38;
+    const AssertDeepEqual: u16 = 39;
+    const AssertPartialDeepStrictEqual: u16 = 41;
+    const AssertClass: u16 = 42;
     const AssertRejects: u16 = 2340;
     const AssertDoesNotReject: u16 = 2341;
     const ErrorsDetermineSpecificType: u16 = 2342;

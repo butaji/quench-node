@@ -6,7 +6,7 @@ fn assert_module() -> Value {
     for (name, id) in [
         ("strictEqual", CapabilityName::AssertStrictEqual),
         ("deepStrictEqual", CapabilityName::AssertDeepStrictEqual),
-        ("deepEqual", CapabilityName::AssertDeepStrictEqual),
+        ("deepEqual", CapabilityName::AssertDeepEqual),
         ("ok", CapabilityName::AssertOk),
         ("throws", CapabilityName::AssertThrows),
         ("doesNotThrow", CapabilityName::AssertDoesNotThrow),
@@ -24,7 +24,12 @@ fn assert_module() -> Value {
         ("notDeepEqual", CapabilityName::AssertNotDeepEqual),
         ("rejects", CapabilityName::AssertRejects),
         ("doesNotReject", CapabilityName::AssertDoesNotReject),
+        (
+            "partialDeepStrictEqual",
+            CapabilityName::AssertPartialDeepStrictEqual,
+        ),
         ("AssertionError", CapabilityName::AssertError),
+        ("Assert", CapabilityName::AssertClass),
     ] {
         module = quench_runtime::execute::set_property(
             module,
@@ -149,8 +154,14 @@ fn process_module() -> Value {
                 )),
             )]),
         ),
-        ("stdout".into(), stdio_writable_stream(1, CapabilityName::ProcessStdoutWrite)),
-        ("stderr".into(), stdio_writable_stream(2, CapabilityName::ProcessStderrWrite)),
+        (
+            "stdout".into(),
+            stdio_writable_stream(1, CapabilityName::ProcessStdoutWrite),
+        ),
+        (
+            "stderr".into(),
+            stdio_writable_stream(2, CapabilityName::ProcessStderrWrite),
+        ),
         ("stdin".into(), stdio_readable_stream()),
     ]);
     NODE_PROCESS_MODULE.with(|current| current.replace(Some(module.clone())));
@@ -166,7 +177,11 @@ fn process_stdio_write(arguments: &[Value], fd: i32) -> Result<Value, VmError> {
     let mut remaining = bytes.as_slice();
     while !remaining.is_empty() {
         let count = unsafe {
-            libc::write(fd, remaining.as_ptr() as *const libc::c_void, remaining.len())
+            libc::write(
+                fd,
+                remaining.as_ptr() as *const libc::c_void,
+                remaining.len(),
+            )
         };
         if count <= 0 {
             break;
@@ -187,8 +202,9 @@ fn stdio_identity_value() -> Value {
 /// always non-interactive (`isTTY === false`) on the reduced engine.
 fn stdio_writable_stream(fd: i32, write: u16) -> Value {
     let this = stdio_identity_value();
-    let listeners_empty =
-        capability_function(HostCapabilityKind::Custom(CapabilityName::StdioListenersEmpty));
+    let listeners_empty = capability_function(HostCapabilityKind::Custom(
+        CapabilityName::StdioListenersEmpty,
+    ));
     let count_zero =
         capability_function(HostCapabilityKind::Custom(CapabilityName::StdioCountZero));
     quench_runtime::host_api::object(vec![
@@ -249,8 +265,7 @@ fn stdio_writable_stream(fd: i32, write: u16) -> Value {
 /// `resume`/`setEncoding` are no-ops returning the stream itself.
 fn stdio_readable_stream() -> Value {
     let this = stdio_identity_value();
-    let is_paused =
-        capability_function(HostCapabilityKind::Custom(CapabilityName::StreamIsPaused));
+    let is_paused = capability_function(HostCapabilityKind::Custom(CapabilityName::StreamIsPaused));
     quench_runtime::host_api::object(vec![
         ("fd".into(), Value::Number(0.0)),
         ("readable".into(), Value::Boolean(true)),
@@ -288,7 +303,8 @@ fn stdio_readable_stream() -> Value {
 
 fn process_on(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(listener) = arguments.get(1) {
-        NODE_PROCESS_WARNING_LISTENERS.with(|listeners| listeners.borrow_mut().push(listener.clone()));
+        NODE_PROCESS_WARNING_LISTENERS
+            .with(|listeners| listeners.borrow_mut().push(listener.clone()));
     }
     Ok(NODE_PROCESS_MODULE
         .with(|module| module.borrow().clone())
@@ -299,7 +315,11 @@ fn process_emit(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(value) = arguments.get(1) {
         let listeners = NODE_PROCESS_WARNING_LISTENERS.with(|listeners| listeners.borrow().clone());
         for listener in listeners {
-            quench_runtime::execute::call(&listener, &Value::Undefined, std::slice::from_ref(value))?;
+            quench_runtime::execute::call(
+                &listener,
+                &Value::Undefined,
+                std::slice::from_ref(value),
+            )?;
         }
         return Ok(Value::Boolean(true));
     }
@@ -483,10 +503,29 @@ fn is_process_builtin(id: &str) -> bool {
     let bare = id.strip_prefix("node:").unwrap_or(id);
     matches!(
         bare,
-        "assert" | "buffer" | "child_process" | "crypto" | "events" | "fs" | "fs/promises"
-            | "http" | "https" | "module" | "net" | "os" | "path" | "process" | "stream"
-            | "string_decoder" | "timers" | "timers/promises" | "tls" | "url" | "util"
-            | "v8" | "worker_threads"
+        "assert"
+            | "buffer"
+            | "child_process"
+            | "crypto"
+            | "events"
+            | "fs"
+            | "fs/promises"
+            | "http"
+            | "https"
+            | "module"
+            | "net"
+            | "os"
+            | "path"
+            | "process"
+            | "stream"
+            | "string_decoder"
+            | "timers"
+            | "timers/promises"
+            | "tls"
+            | "url"
+            | "util"
+            | "v8"
+            | "worker_threads"
     )
 }
 

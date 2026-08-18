@@ -3,10 +3,7 @@ fn query_pairs(input: &str) -> Vec<(String, String)> {
         .split('&')
         .filter(|pair| !pair.is_empty())
         .map(|pair| match pair.find('=') {
-            Some(index) => (
-                pair[..index].to_string(),
-                pair[index + 1..].to_string(),
-            ),
+            Some(index) => (pair[..index].to_string(), pair[index + 1..].to_string()),
             None => (pair.to_string(), String::new()),
         })
         .collect()
@@ -73,7 +70,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(id)
                 if (13..=20).contains(&id)
                     || (24..=26).contains(&id)
-                    || (33..=38).contains(&id) =>
+                    || (33..=39).contains(&id)
+                    || (41..=42).contains(&id) =>
             {
                 assertion_call(id, arguments)
             }
