@@ -5,7 +5,7 @@ fn path_module() -> Value {
     let relative = capability_function(HostCapabilityKind::Custom(CapabilityName::PathRelative));
     let dirname = capability_function(HostCapabilityKind::Custom(CapabilityName::PathDirname));
     let absolute = capability_function(HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute));
-    let mut path = Value::object(vec![
+    let path = Value::object(vec![
         ("sep".into(), Value::String("/".into())),
         ("delimiter".into(), Value::String(":".into())),
         (
@@ -151,7 +151,6 @@ fn path_module() -> Value {
             ]),
         ),
     ]);
-    path = quench_runtime::execute::set_property(path.clone(), "posix", path);
     NODE_PATH_MODULE.with(|module| module.replace(Some(path.clone())));
     path
 }

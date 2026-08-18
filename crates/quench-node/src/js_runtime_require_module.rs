@@ -196,6 +196,14 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             return Ok(path);
         }
     }
+    if name == "path/posix" || name == "node:path/posix" {
+        let path = require_module(&[Value::String("path".into())])?;
+        return quench_runtime::execute::get_property_result(&path, "posix");
+    }
+    if name == "path/win32" || name == "node:path/win32" {
+        let path = require_module(&[Value::String("path".into())])?;
+        return quench_runtime::execute::get_property_result(&path, "win32");
+    }
     if name != "node:path" && name != "path" {
         if name == "stream/iter" || name == "node:stream/iter" {
             return Ok(Value::object(vec![

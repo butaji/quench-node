@@ -1434,22 +1434,42 @@ fn path_resolve(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
     Ok(Value::String(result.into()))
 }
 
+/// Node's default and `path.posix` `toNamespacedPath` are the identity
+/// function: the argument is returned unchanged, whatever its type. Only the
+/// win32 variant rewrites the path.
+fn path_to_namespaced(arguments: &[Value]) -> Result<Value, VmError> {
+    Ok(arguments.first().cloned().unwrap_or(Value::Undefined))
+}
+
+/// Port of Node's `path.win32.toNamespacedPath`: resolve the path, then fold
+/// it into a `\\?\`-prefixed long path when it is a drive-rooted or UNC path.
 fn path_win_to_namespaced(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(value) = arguments.first() else {
         return Ok(Value::Undefined);
     };
-    let Value::String(value) = value else {
+    let Value::String(path) = value else {
         return Ok(value.clone());
     };
-    let value = value.replace('/', "\\");
-    if value.starts_with("\\\\") {
-        Ok(Value::String(format!(
-            "\\\\?\\UNC\\{}\\",
-            value.trim_start_matches("\\\\")
-        )))
-    } else if value.len() > 2 && value.as_bytes()[1] == b':' {
-        Ok(Value::String(format!("\\\\?\\{}", value)))
-    } else {
-        Ok(Value::String(value))
+    if path.is_empty() {
+        return Ok(Value::String(String::new()));
     }
+    let resolved = win32_resolve_str(&[path.as_str()], &resolve_cwd());
+    if resolved.len() <= 2 {
+        return Ok(Value::String(path.clone()));
+    }
+    let bytes = resolved.as_bytes();
+    if bytes[0] == b'\\' {
+        if bytes.get(1) == Some(&b'\\') {
+            let code2 = bytes.get(2).copied();
+            if code2 != Some(b'?') && code2 != Some(b'.') {
+                return Ok(Value::String(format!("\\\\?\\UNC\\{}", &resolved[2..])));
+            }
+        }
+    } else if is_windows_device_root(bytes[0])
+        && bytes.get(1) == Some(&b':')
+        && bytes.get(2) == Some(&b'\\')
+    {
+        return Ok(Value::String(format!("\\\\?\\{resolved}")));
+    }
+    Ok(Value::String(resolved))
 }

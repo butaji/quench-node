@@ -23,7 +23,7 @@ impl QuenchNodeHost {
                 path_is_absolute(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::PathToNamespaced) => {
-                path_arg(arguments, 0).map(|value| Value::String(value.into()))
+                path_to_namespaced(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::PathWinToNamespaced) => {
                 path_win_to_namespaced(arguments)
