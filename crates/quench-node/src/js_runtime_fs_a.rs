@@ -34,12 +34,38 @@ fn fs_stats(mode: u32) -> Value {
     stats
 }
 
+/// Whether the options in `arguments[1]` set `throwIfNoEntry: false`, in which
+/// case a missing file yields `undefined` instead of throwing `ENOENT`.
+fn stat_no_entry_ok(arguments: &[Value]) -> bool {
+    arguments
+        .get(1)
+        .and_then(|options| {
+            quench_runtime::execute::get_property_result(options, "throwIfNoEntry").ok()
+        })
+        .is_some_and(|value| matches!(value, Value::Boolean(false)))
+}
+
+fn stat_metadata_sync(path: &str, symlink: bool) -> Result<std::fs::Metadata, std::io::Error> {
+    if symlink {
+        std::fs::symlink_metadata(path)
+    } else {
+        std::fs::metadata(path)
+    }
+}
+
 fn fs_stat_async(arguments: &[Value]) -> Result<Value, VmError> {
     let path = path_arg(arguments, 0)?;
-    let metadata =
-        std::fs::metadata(path).map_err(|error| VmError::EvalError(error.to_string()))?;
-    let mode = if metadata.is_dir() { 0o40000 } else { 0o100000 };
-    let stats = fs_stats(mode);
+    let metadata = match stat_metadata_sync(path, false) {
+        Ok(metadata) => metadata,
+        Err(_) if stat_no_entry_ok(arguments) => {
+            if let Some(callback) = arguments.last() {
+                quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null, Value::Undefined])?;
+            }
+            return Ok(Value::Undefined);
+        }
+        Err(error) => return Err(node_system_error(error, "stat", path)),
+    };
+    let stats = fs_stats_full(&metadata, stat_bigint_requested(arguments));
     if let Some(callback) = arguments.last() {
         quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null, stats])?;
     }
@@ -265,8 +291,11 @@ fn fs_readdir_async(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn fs_stat_sync(arguments: &[Value]) -> Result<Value, VmError> {
     let path = path_arg(arguments, 0)?;
-    let metadata =
-        std::fs::metadata(path).map_err(|error| VmError::EvalError(error.to_string()))?;
+    let metadata = match stat_metadata_sync(path, false) {
+        Ok(metadata) => metadata,
+        Err(_) if stat_no_entry_ok(arguments) => return Ok(Value::Undefined),
+        Err(error) => return Err(node_system_error(error, "stat", path)),
+    };
     Ok(fs_stats_full(&metadata, stat_bigint_requested(arguments)))
 }
 
