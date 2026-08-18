@@ -559,6 +559,19 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsReadFdAsync) => {
                 self.fs_read_fd(arguments, true)
             }
+            HostCapabilityKind::Custom(CapabilityName::ProcessStdoutWrite) => {
+                process_stdio_write(arguments, 1)
+            }
+            HostCapabilityKind::Custom(CapabilityName::ProcessStderrWrite) => {
+                process_stdio_write(arguments, 2)
+            }
+            HostCapabilityKind::Custom(CapabilityName::StdioIdentity) => {
+                Ok(receiver.cloned().unwrap_or(Value::Undefined))
+            }
+            HostCapabilityKind::Custom(CapabilityName::StdioListenersEmpty) => {
+                Ok(quench_runtime::host_api::array(Vec::new()))
+            }
+            HostCapabilityKind::Custom(CapabilityName::StdioCountZero) => Ok(Value::Number(0.0)),
                 _ => Err(VmError::EvalError(DISPATCH_UNHANDLED.into())),
             }
         })();

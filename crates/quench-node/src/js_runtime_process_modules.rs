@@ -149,9 +149,141 @@ fn process_module() -> Value {
                 )),
             )]),
         ),
+        ("stdout".into(), stdio_writable_stream(1, CapabilityName::ProcessStdoutWrite)),
+        ("stderr".into(), stdio_writable_stream(2, CapabilityName::ProcessStderrWrite)),
+        ("stdin".into(), stdio_readable_stream()),
     ]);
     NODE_PROCESS_MODULE.with(|current| current.replace(Some(module.clone())));
     module
+}
+
+/// Write already-validated bytes chunks to a fixed stdio file descriptor
+/// (1 for stdout, 2 for stderr) so `process.stdout.write`/`process.stderr.write`
+/// are backed by the real process FDs. Returns `true`, mirroring a writable
+/// stream that is not backpressured.
+fn process_stdio_write(arguments: &[Value], fd: i32) -> Result<Value, VmError> {
+    let bytes = string_or_bytes(arguments.first())?;
+    let mut remaining = bytes.as_slice();
+    while !remaining.is_empty() {
+        let count = unsafe {
+            libc::write(fd, remaining.as_ptr() as *const libc::c_void, remaining.len())
+        };
+        if count <= 0 {
+            break;
+        }
+        remaining = &remaining[count as usize..];
+    }
+    Ok(Value::Boolean(true))
+}
+
+/// Capability-backed method that resolves to the stream itself, so every
+/// chainable stdio method (`on`, `setEncoding`, `ref`, ...) has a value that
+/// returns `this` like the real Node stream surface.
+fn stdio_identity_value() -> Value {
+    capability_function(HostCapabilityKind::Custom(CapabilityName::StdioIdentity))
+}
+
+/// Build the `process.stdout` / `process.stderr` writable stdio stream. It is
+/// always non-interactive (`isTTY === false`) on the reduced engine.
+fn stdio_writable_stream(fd: i32, write: u16) -> Value {
+    let this = stdio_identity_value();
+    let listeners_empty =
+        capability_function(HostCapabilityKind::Custom(CapabilityName::StdioListenersEmpty));
+    let count_zero =
+        capability_function(HostCapabilityKind::Custom(CapabilityName::StdioCountZero));
+    quench_runtime::host_api::object(vec![
+        ("fd".into(), Value::Number(fd as f64)),
+        ("isTTY".into(), Value::Boolean(false)),
+        (
+            "write".into(),
+            capability_function(HostCapabilityKind::Custom(write)),
+        ),
+        ("setEncoding".into(), this.clone()),
+        ("setDefaultEncoding".into(), this.clone()),
+        ("on".into(), this.clone()),
+        ("addListener".into(), this.clone()),
+        ("prependListener".into(), this.clone()),
+        ("prependOnceListener".into(), this.clone()),
+        ("once".into(), this.clone()),
+        ("removeListener".into(), this.clone()),
+        ("off".into(), this.clone()),
+        ("emit".into(), this.clone()),
+        ("end".into(), this.clone()),
+        ("cork".into(), this.clone()),
+        ("uncork".into(), this.clone()),
+        ("pause".into(), this.clone()),
+        ("resume".into(), this.clone()),
+        ("ref".into(), this.clone()),
+        ("unref".into(), this.clone()),
+        ("destroy".into(), this.clone()),
+        ("destroySoon".into(), this.clone()),
+        ("pipe".into(), this.clone()),
+        ("setMaxListeners".into(), this.clone()),
+        ("listenerCount".into(), count_zero.clone()),
+        ("getMaxListeners".into(), count_zero.clone()),
+        ("eventNames".into(), listeners_empty.clone()),
+        ("rawListeners".into(), listeners_empty.clone()),
+        ("listeners".into(), listeners_empty),
+        ("destroyed".into(), Value::Boolean(false)),
+        ("_isStdio".into(), Value::Boolean(true)),
+        ("writable".into(), Value::Boolean(true)),
+        ("writableEnded".into(), Value::Boolean(false)),
+        ("writableFinished".into(), Value::Boolean(false)),
+        ("writableNeedDrain".into(), Value::Boolean(false)),
+        ("writableCorked".into(), Value::Number(0.0)),
+        ("writableHighWaterMark".into(), Value::Number(16384.0)),
+        ("readable".into(), Value::Boolean(false)),
+        ("readableEnded".into(), Value::Boolean(true)),
+        ("readableFlowing".into(), Value::Null),
+        ("readableHighWaterMark".into(), Value::Number(65536.0)),
+        ("readableLength".into(), Value::Number(0.0)),
+        ("bytesWritten".into(), Value::Number(0.0)),
+        ("pending".into(), Value::Boolean(false)),
+        ("writableObjectMode".into(), Value::Boolean(false)),
+        ("readableObjectMode".into(), Value::Boolean(false)),
+    ])
+}
+
+/// Build the `process.stdin` readable stdio stream. It is closed (data is not
+/// consumed by the reduced engine), so `read`/`end` return `null` and `pause`/
+/// `resume`/`setEncoding` are no-ops returning the stream itself.
+fn stdio_readable_stream() -> Value {
+    let this = stdio_identity_value();
+    let is_paused =
+        capability_function(HostCapabilityKind::Custom(CapabilityName::StreamIsPaused));
+    quench_runtime::host_api::object(vec![
+        ("fd".into(), Value::Number(0.0)),
+        ("readable".into(), Value::Boolean(true)),
+        ("readableEnded".into(), Value::Boolean(false)),
+        ("readableFlowing".into(), Value::Null),
+        ("readableHighWaterMark".into(), Value::Number(65536.0)),
+        ("readableLength".into(), Value::Number(0.0)),
+        ("readableObjectMode".into(), Value::Boolean(false)),
+        ("isPaused".into(), is_paused),
+        ("pause".into(), this.clone()),
+        ("resume".into(), this.clone()),
+        ("setEncoding".into(), this.clone()),
+        ("unshift".into(), this.clone()),
+        ("destroy".into(), this.clone()),
+        ("ref".into(), this.clone()),
+        ("unref".into(), this.clone()),
+        ("unpipe".into(), this.clone()),
+        ("wrap".into(), this.clone()),
+        ("close".into(), this.clone()),
+        ("on".into(), this.clone()),
+        ("once".into(), this.clone()),
+        ("pipe".into(), this.clone()),
+        ("end".into(), Value::Null),
+        ("read".into(), Value::Null),
+        ("destroyed".into(), Value::Boolean(false)),
+        ("pending".into(), Value::Boolean(false)),
+        ("closed".into(), Value::Boolean(false)),
+        ("errored".into(), Value::Null),
+        ("readableAborted".into(), Value::Boolean(false)),
+        ("autoClose".into(), Value::Boolean(false)),
+        ("bytesRead".into(), Value::Number(0.0)),
+        ("readableEncoding".into(), Value::Null),
+    ])
 }
 
 fn process_on(arguments: &[Value]) -> Result<Value, VmError> {

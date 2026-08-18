@@ -326,6 +326,11 @@ impl CapabilityName {
     const AssertDoesNotReject: u16 = 2341;
     const ErrorsDetermineSpecificType: u16 = 2342;
     const ProcessGetBuiltinModule: u16 = 2343;
+    const ProcessStdoutWrite: u16 = 2355;
+    const ProcessStderrWrite: u16 = 2356;
+    const StdioIdentity: u16 = 2357;
+    const StdioListenersEmpty: u16 = 2358;
+    const StdioCountZero: u16 = 2359;
     const ModuleRequireCall: u16 = 2344;
     const TimersPromisesSetTimeout: u16 = 2346;
     const TimersPromisesSetImmediate: u16 = 2347;
