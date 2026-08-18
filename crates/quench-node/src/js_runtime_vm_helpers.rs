@@ -107,13 +107,35 @@ fn vm_script_run_new_context(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn common_invalid_arg_type_helper(arguments: &[Value]) -> Result<Value, VmError> {
-    let value = arguments
-        .first()
-        .map(safe_value_string)
-        .unwrap_or_else(|| "undefined".into());
     Ok(Value::String(
-        format!(" Received type string ('{value}')").into(),
+        invalid_arg_type_suffix(arguments.first()).into(),
     ))
+}
+
+fn invalid_arg_type_suffix(value: Option<&Value>) -> String {
+    match value {
+        None | Some(Value::Undefined) => " Received undefined".into(),
+        Some(Value::Null) => " Received null".into(),
+        Some(Value::Boolean(value)) => {
+            format!(" Received type boolean ({value})")
+        }
+        Some(Value::Number(value)) => {
+            let rendered = if value.fract() == 0.0 {
+                format!("{value:.0}")
+            } else {
+                value.to_string()
+            };
+            format!(" Received type number ({rendered})")
+        }
+        Some(Value::String(value)) => {
+            format!(" Received type string ('{value}')")
+        }
+        Some(Value::Object(_)) => " Received an instance of Object".into(),
+        Some(Value::Function(_) | Value::BoundFunction(_) | Value::HostCapability(_)) => {
+            " Received function".into()
+        }
+        Some(other) => format!(" Received type object ({})", safe_value_string(other)),
+    }
 }
 
 fn vm_run_in_context(arguments: &[Value]) -> Result<Value, VmError> {

@@ -1,11 +1,45 @@
 fn path_arg(arguments: &[Value], index: usize) -> Result<&str, VmError> {
     match arguments.get(index) {
         Some(Value::String(value)) => Ok(value),
-        _ => Err(VmError::Thrown(fs_error(
+        other => Err(VmError::Thrown(type_error(
             "ERR_INVALID_ARG_TYPE",
-            "path must be a string",
+            &path_type_message("path", other),
         ))),
     }
+}
+
+fn path_type_message(name: &str, value: Option<&Value>) -> String {
+    match value {
+        None | Some(Value::Undefined) => {
+            format!("The \"{name}\" argument must be of type string. Received undefined")
+        }
+        Some(Value::Null) => {
+            format!("The \"{name}\" argument must be of type string. Received null")
+        }
+        Some(Value::Boolean(value)) => format!(
+            "The \"{name}\" argument must be of type string. Received type boolean ({value})"
+        ),
+        Some(Value::Number(value)) => format!(
+            "The \"{name}\" argument must be of type string. Received type number ({value})"
+        ),
+        Some(Value::String(value)) => format!(
+            "The \"{name}\" argument must be of type string. Received type string ('{value}')"
+        ),
+        Some(Value::Object(_)) => {
+            format!(
+                "The \"{name}\" argument must be of type string. Received an instance of Object"
+            )
+        }
+        _ => format!("The \"{name}\" argument must be of type string"),
+    }
+}
+
+fn type_error(code: &str, message: &str) -> Value {
+    quench_runtime::host_api::object(vec![
+        ("code".into(), Value::String(code.into())),
+        ("message".into(), Value::String(message.into())),
+        ("name".into(), Value::String("TypeError".into())),
+    ])
 }
 
 fn path_value(arguments: &[Value], index: usize) -> Result<String, VmError> {
@@ -345,7 +379,11 @@ fn win32_normalize(input: &str) -> String {
     let code = bytes[0];
 
     if len == 1 {
-        return if code == b'/' { "\\".into() } else { input.to_string() };
+        return if code == b'/' {
+            "\\".into()
+        } else {
+            input.to_string()
+        };
     }
     if is_windows_path_separator(code) {
         is_absolute = true;
@@ -372,17 +410,16 @@ fn win32_normalize(input: &str) -> String {
                             root_end = 4;
                             if let Some(colon_index) = input.find(':') {
                                 let possible_device = &input[4..=colon_index];
-                                if is_windows_reserved_name(possible_device, possible_device.len() - 1)
-                                {
+                                if is_windows_reserved_name(
+                                    possible_device,
+                                    possible_device.len() - 1,
+                                ) {
                                     device = Some(format!("\\\\?\\{possible_device}"));
                                     root_end = 4 + possible_device.len();
                                 }
                             }
                         } else if j == len {
-                            return format!(
-                                "\\\\{first_part}\\{}\\",
-                                &input[last..]
-                            );
+                            return format!("\\\\{first_part}\\{}\\", &input[last..]);
                         } else {
                             device = Some(format!("\\\\{first_part}\\{}", &input[last..j]));
                             root_end = j;
@@ -411,7 +448,12 @@ fn win32_normalize(input: &str) -> String {
     }
 
     let mut tail = if root_end < len {
-        normalize_string(&input[root_end..], !is_absolute, '\\', is_windows_path_separator)
+        normalize_string(
+            &input[root_end..],
+            !is_absolute,
+            '\\',
+            is_windows_path_separator,
+        )
     } else {
         String::new()
     };
@@ -448,7 +490,11 @@ fn win32_normalize(input: &str) -> String {
     let device_bound = input.find(':').unwrap_or_else(|| {
         // Node: StringPrototypeSlice(path, 0, -1) drops the final character when
         // no colon is present; e.g. "COM9." resolves its device part to "COM9".
-        input.char_indices().next_back().map(|(i, _)| i).unwrap_or(0)
+        input
+            .char_indices()
+            .next_back()
+            .map(|(i, _)| i)
+            .unwrap_or(0)
     });
     if device_bound < len && is_windows_reserved_name(input, device_bound) {
         return format!(".\\{}{tail}", device.as_deref().unwrap_or(""));
@@ -604,7 +650,12 @@ fn path_parse_core(input: &str, win32: bool) -> PathParts {
 }
 
 /// Runs the shared "get non-dir info" scan and, for win32, computes `dir`.
-fn parse_split_tail(input: &str, start: usize, is_sep: impl Fn(u8) -> bool, win32: bool) -> PathParts {
+fn parse_split_tail(
+    input: &str,
+    start: usize,
+    is_sep: impl Fn(u8) -> bool,
+    win32: bool,
+) -> PathParts {
     let bytes = input.as_bytes();
     let len = bytes.len();
     let mut start_dot: isize = -1;
@@ -686,11 +737,32 @@ fn path_parse(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
 
 /// Port of Node's `_format(sep, pathObject)`: `dir` defaults to `root`, and
 /// `base` defaults to `name + formatExt(ext)`.
+fn path_object_type_message(value: Option<&Value>) -> String {
+    match value {
+        None | Some(Value::Undefined) => {
+            "The \"pathObject\" argument must be of type object. Received undefined".into()
+        }
+        Some(Value::Null) => {
+            "The \"pathObject\" argument must be of type object. Received null".into()
+        }
+        Some(Value::Boolean(value)) => format!(
+            "The \"pathObject\" argument must be of type object. Received type boolean ({value})"
+        ),
+        Some(Value::Number(value)) => format!(
+            "The \"pathObject\" argument must be of type object. Received type number ({value})"
+        ),
+        Some(Value::String(value)) => format!(
+            "The \"pathObject\" argument must be of type object. Received type string ('{value}')"
+        ),
+        _ => "The \"pathObject\" argument must be of type object".into(),
+    }
+}
+
 fn path_format(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
     let Some(Value::Object(object)) = arguments.first() else {
-        return Err(VmError::Thrown(fs_error(
+        return Err(VmError::Thrown(type_error(
             "ERR_INVALID_ARG_TYPE",
-            "path object must be an object",
+            &path_object_type_message(arguments.first()),
         )));
     };
     let get = |name| {
@@ -775,7 +847,11 @@ fn win32_relative_str(from_orig: &str, to_orig: &str) -> String {
             }
             return String::new();
         }
-        return format!("{}{}", "..\\".repeat(from_len - i), to_split[i..].join("\\"));
+        return format!(
+            "{}{}",
+            "..\\".repeat(from_len - i),
+            to_split[i..].join("\\")
+        );
     }
 
     let from_bytes = from.as_bytes();
@@ -869,7 +945,9 @@ fn path_win_relative(arguments: &[Value]) -> Result<Value, VmError> {
     let from_orig = win32_resolve_str(&[args_from[0].as_str()], &cwd);
     let args_to = &[path_arg(arguments, 1)?.to_string()];
     let to_orig = win32_resolve_str(&[args_to[0].as_str()], &cwd);
-    Ok(Value::String(win32_relative_str(&from_orig, &to_orig).into()))
+    Ok(Value::String(
+        win32_relative_str(&from_orig, &to_orig).into(),
+    ))
 }
 
 fn join_path_args(arguments: &[Value]) -> Result<Vec<&str>, VmError> {
@@ -893,15 +971,15 @@ fn host_cwd() -> String {
 /// (e.g. to `''` to exercise the failure fallback). Prefer the JS function so
 /// the mock is honoured, falling back to the host directory.
 fn resolve_cwd() -> String {
-    let js = NODE_PROCESS_MODULE.with(|current| current.borrow().clone()).and_then(
-        |process| {
+    let js = NODE_PROCESS_MODULE
+        .with(|current| current.borrow().clone())
+        .and_then(|process| {
             let cwd_fn = quench_runtime::execute::get_property_result(&process, "cwd").ok()?;
             match quench_runtime::execute::call(&cwd_fn, &process, &[]) {
                 Ok(Value::String(value)) => Some(value.to_string()),
                 _ => None,
             }
-        },
-    );
+        });
     js.unwrap_or_else(host_cwd)
 }
 
@@ -1053,7 +1131,10 @@ fn path_win_join(arguments: &[Value]) -> Result<Value, VmError> {
 
     // Preserve a path verbatim when any component names a reserved device.
     let reserved = joined.split('\\').any(|part| {
-        !part.is_empty() && part.find(':').is_some_and(|ci| is_windows_reserved_name(part, ci))
+        !part.is_empty()
+            && part
+                .find(':')
+                .is_some_and(|ci| is_windows_reserved_name(part, ci))
     });
     if reserved {
         return Ok(Value::String(joined.replace('/', "\\").into()));
@@ -1069,15 +1150,12 @@ fn path_extname_core(input: &str, win32: bool) -> String {
     let bytes = input.as_bytes();
     let len = bytes.len() as isize;
     let is_sep = |c: u8| c == b'/' || (win32 && c == b'\\');
-    let start: isize = if win32
-        && bytes.len() >= 2
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1] == b':'
-    {
-        2
-    } else {
-        0
-    };
+    let start: isize =
+        if win32 && bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+            2
+        } else {
+            0
+        };
     let mut start_part = start;
     let mut start_dot: isize = -1;
     let mut end: isize = -1;
@@ -1403,7 +1481,12 @@ fn win32_resolve_str(args: &[&str], cwd: &str) -> String {
         i -= 1;
     }
 
-    let mut tail = normalize_string(&resolved_tail, !resolved_absolute, '\\', is_windows_path_separator);
+    let mut tail = normalize_string(
+        &resolved_tail,
+        !resolved_absolute,
+        '\\',
+        is_windows_path_separator,
+    );
     if tail.is_empty() && resolved_absolute {
         tail.clear();
     }

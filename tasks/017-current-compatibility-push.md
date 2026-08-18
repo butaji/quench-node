@@ -1044,3 +1044,10 @@ Current pushed increments (2026-08-09):
   and records `expected: null`.
 - Focused stage 2607 covers the public comparison / throws / fail surface and
   passes. `test-assert-fail.js` now completes under the host assert path.
+
+## 2026-08-17 path.parse/format TypeErrors
+
+- `path.parse` and `path.format` now throw `TypeError` / `ERR_INVALID_ARG_TYPE`
+  with Node-shaped `Received …` suffixes.
+- `common.invalidArgTypeHelper` no longer stringifies every value as a string.
+- Focused stage 2608 and upstream `test-path-parse-format.js` pass.
