@@ -33,10 +33,10 @@ Runnable application examples are in [`examples/`](examples/). They can be
 executed directly with the runtime:
 
 ```sh
-cargo run -p quench-node -- examples/cli-summary.js
-cargo run -p quench-node -- examples/crypto-file-summary.js
-cargo run -p quench-node -- examples/http-loopback.js
-cargo run -p quench-node -- examples/stream-summary.js
+cargo run -p quench-node -- examples/cli-summary.cjs
+cargo run -p quench-node -- examples/crypto-file-summary.cjs
+cargo run -p quench-node -- examples/http-loopback.cjs
+cargo run -p quench-node -- examples/stream-summary.cjs
 tools/run-examples.sh
 ```
 

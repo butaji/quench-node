@@ -14,7 +14,7 @@ run_example() {
   "$binary" "$root/examples/$file"
 }
 
-run_example cli-summary.js
-run_example crypto-file-summary.js
-run_example http-loopback.js
-run_example stream-summary.js
+run_example cli-summary.cjs
+run_example crypto-file-summary.cjs
+run_example http-loopback.cjs
+run_example stream-summary.cjs
