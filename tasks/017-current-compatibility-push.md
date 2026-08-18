@@ -1057,3 +1057,18 @@ Current pushed increments (2026-08-09):
 - `assert.match` / `doesNotMatch` now compile the RegExp source when the
   engine's `test()` property is not usable from the host.
 - Stage 2609 and upstream `test-path-posix-relative-on-windows.js` pass.
+
+## 2026-08-17 os surface and mustCall arguments
+
+- `common.mustCall` / `mustCallAtLeast` now forward every argument to the
+  wrapped callback (they previously dropped a lone argument).
+- `os.setPriority(priority)` accepts the one-argument form, tmpdir follows
+  live `process.env` and Node's `/tmp` default, and `os.arch` reports `arm64`
+  / `x64` instead of rustc names.
+- `os.cpus()`, `release`, `version`, and memory now use host uname/sysconf.
+- Stage 2610 and upstream `test-os.js` pass.
+
+## 2026-08-17 util.format %j
+
+- `%j` now JSON-stringifies objects, arrays, and primitives.
+- Stage 2611 covers the specifier.

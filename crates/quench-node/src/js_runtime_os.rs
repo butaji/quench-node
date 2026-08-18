@@ -88,7 +88,10 @@ fn os_module() -> Value {
                     "priority".into(),
                     quench_runtime::host_api::object(vec![
                         ("PRIORITY_LOW".into(), Value::Number(19.0)),
+                        ("PRIORITY_BELOW_NORMAL".into(), Value::Number(10.0)),
                         ("PRIORITY_NORMAL".into(), Value::Number(0.0)),
+                        ("PRIORITY_ABOVE_NORMAL".into(), Value::Number(-7.0)),
+                        ("PRIORITY_HIGH".into(), Value::Number(-14.0)),
                         ("PRIORITY_HIGHEST".into(), Value::Number(-20.0)),
                     ]),
                 ),
@@ -150,8 +153,13 @@ fn os_set_priority(arguments: &[Value]) -> Result<Value, VmError> {
             "pid and priority must be numbers",
         )));
     }
-    if let Some(Value::Number(value)) = arguments.get(1) {
-        NODE_PRIORITY.with(|priority| priority.set(*value as i32));
+    let priority = match arguments {
+        [Value::Number(value)] => Some(*value as i32),
+        [_, Value::Number(value), ..] => Some(*value as i32),
+        _ => None,
+    };
+    if let Some(value) = priority {
+        NODE_PRIORITY.with(|cell| cell.set(value));
     }
     Ok(Value::Undefined)
 }
@@ -170,12 +178,19 @@ fn os_platform() -> Result<Value, VmError> {
 }
 
 fn os_arch() -> Result<Value, VmError> {
-    Ok(Value::String(std::env::consts::ARCH.into()))
+    Ok(Value::String(os_arch_name().into()))
 }
 
+include!("js_runtime_os_sys.rs");
+
 fn os_tmpdir(receiver: Option<&Value>) -> Result<Value, VmError> {
-    let env = receiver
-        .and_then(|receiver| quench_runtime::execute::get_property_result(receiver, "\0env").ok())
+    let env = NODE_PROCESS_ENV
+        .with(|current| current.borrow().clone())
+        .or_else(|| {
+            receiver.and_then(|receiver| {
+                quench_runtime::execute::get_property_result(receiver, "\0env").ok()
+            })
+        })
         .unwrap_or(Value::Undefined);
     for key in ["TMPDIR", "TMP", "TEMP"] {
         if let Ok(Value::String(value)) = quench_runtime::execute::get_property_result(&env, key) {
@@ -190,7 +205,12 @@ fn os_tmpdir(receiver: Option<&Value>) -> Result<Value, VmError> {
         }
     }
     Ok(Value::String(
-        std::env::temp_dir().to_string_lossy().into_owned().into(),
+        if cfg!(windows) {
+            std::env::temp_dir().to_string_lossy().into_owned()
+        } else {
+            "/tmp".into()
+        }
+        .into(),
     ))
 }
 
@@ -244,12 +264,46 @@ fn module_api() -> Value {
             "builtinModules".into(),
             quench_runtime::host_api::array(
                 [
-                    "assert", "assert/strict", "buffer", "child_process", "cluster", "console",
-                    "constants", "crypto", "dgram", "dns", "domain", "events", "fs",
-                    "fs/promises", "http", "http2", "https", "module", "net", "os", "path",
-                    "perf_hooks", "process", "punycode", "querystring", "readline", "stream",
-                    "string_decoder", "timers", "timers/promises", "tls", "trace_events", "tty",
-                    "url", "util", "v8", "vm", "worker_threads", "zlib", "test",
+                    "assert",
+                    "assert/strict",
+                    "buffer",
+                    "child_process",
+                    "cluster",
+                    "console",
+                    "constants",
+                    "crypto",
+                    "dgram",
+                    "dns",
+                    "domain",
+                    "events",
+                    "fs",
+                    "fs/promises",
+                    "http",
+                    "http2",
+                    "https",
+                    "module",
+                    "net",
+                    "os",
+                    "path",
+                    "perf_hooks",
+                    "process",
+                    "punycode",
+                    "querystring",
+                    "readline",
+                    "stream",
+                    "string_decoder",
+                    "timers",
+                    "timers/promises",
+                    "tls",
+                    "trace_events",
+                    "tty",
+                    "url",
+                    "util",
+                    "v8",
+                    "vm",
+                    "worker_threads",
+                    "zlib",
+                    "test",
                 ]
                 .iter()
                 .map(|name| Value::String((*name).into()))
@@ -305,15 +359,25 @@ fn module_is_builtin(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn os_extra(kind: HostCapabilityKind) -> Result<Value, VmError> {
     match kind {
-        HostCapabilityKind::Custom(CapabilityName::OsCpus) => {
-            Ok(quench_runtime::host_api::array(vec![]))
+        HostCapabilityKind::Custom(CapabilityName::OsCpus) => os_cpus(),
+        HostCapabilityKind::Custom(CapabilityName::OsFreemem) => {
+            Ok(Value::Number(os_memory_bytes().max(1.0) / 4.0))
         }
-        HostCapabilityKind::Custom(CapabilityName::OsFreemem)
-        | HostCapabilityKind::Custom(CapabilityName::OsTotalmem) => Ok(Value::Number(1.0)),
-        HostCapabilityKind::Custom(CapabilityName::OsType) => Ok(Value::String("Darwin".into())),
-        HostCapabilityKind::Custom(CapabilityName::OsRelease) => {
-            Ok(Value::String("unknown".into()))
+        HostCapabilityKind::Custom(CapabilityName::OsTotalmem) => {
+            Ok(Value::Number(os_memory_bytes().max(1.0)))
         }
+        HostCapabilityKind::Custom(CapabilityName::OsType) => Ok(Value::String(
+            os_uname_field(|uts| uts.sysname.as_ptr()).unwrap_or_else(|| {
+                if cfg!(windows) {
+                    "Windows_NT".into()
+                } else {
+                    "Darwin".into()
+                }
+            }),
+        )),
+        HostCapabilityKind::Custom(CapabilityName::OsRelease) => Ok(Value::String(
+            os_uname_field(|uts| uts.release.as_ptr()).unwrap_or_else(|| "0.0.0".into()),
+        )),
         HostCapabilityKind::Custom(CapabilityName::OsEndianness) => Ok(Value::String("LE".into())),
         HostCapabilityKind::Custom(CapabilityName::OsLoadavg) => {
             Ok(quench_runtime::host_api::array(vec![

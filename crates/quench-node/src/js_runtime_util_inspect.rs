@@ -1,12 +1,56 @@
 fn format_json_value(value: &Value) -> String {
-    if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
-        if let Ok(self_value) = quench_runtime::execute::get_property_result(value, "self") {
-            if matches!(self_value, Value::Object(_) | Value::ObjectAlias(_)) {
-                return "[Circular]".into();
+    json_stringify(value).unwrap_or_else(|| "undefined".into())
+}
+
+fn json_stringify(value: &Value) -> Option<String> {
+    match value {
+        Value::Undefined => None,
+        Value::Null => Some("null".into()),
+        Value::Boolean(value) => Some(value.to_string()),
+        Value::Number(value) => {
+            if value.is_finite() {
+                Some(value.to_string())
+            } else {
+                Some("null".into())
             }
         }
+        Value::String(value) => {
+            Some(serde_json::to_string(value).unwrap_or_else(|_| "\"\"".into()))
+        }
+        Value::Array(_) => Some(json_stringify_array(value)),
+        Value::Object(_) | Value::ObjectAlias(_) => Some(json_stringify_object(value)),
+        _ => None,
     }
-    "undefined".into()
+}
+
+fn json_stringify_array(value: &Value) -> String {
+    let length = array_length(value);
+    let mut parts = Vec::with_capacity(length);
+    for index in 0..length {
+        let item = quench_runtime::execute::get_property_result(value, &index.to_string())
+            .ok()
+            .and_then(|item| json_stringify(&item))
+            .unwrap_or_else(|| "null".into());
+        parts.push(item);
+    }
+    format!("[{}]", parts.join(","))
+}
+
+fn json_stringify_object(value: &Value) -> String {
+    let Value::Object(object) = value else {
+        return "{}".into();
+    };
+    let mut parts = Vec::new();
+    for (key, item) in object.iter() {
+        if key.starts_with('\0') {
+            continue;
+        }
+        if let Some(rendered) = json_stringify(item) {
+            let key = serde_json::to_string(key).unwrap_or_else(|_| "\"\"".into());
+            parts.push(format!("{key}:{rendered}"));
+        }
+    }
+    format!("{{{}}}", parts.join(","))
 }
 
 fn format_compact_array(value: &Value) -> String {

@@ -30,15 +30,7 @@ impl QuenchNodeHost {
         if matches!(callback, Value::Undefined) {
             return Ok(Value::Undefined);
         }
-        quench_runtime::execute::call(
-            &callback,
-            &Value::Undefined,
-            if arguments.len() > 1 {
-                &arguments[1..]
-            } else {
-                &[]
-            },
-        )
+        quench_runtime::execute::call(&callback, &Value::Undefined, arguments)
     }
 
     fn util_promisify(&self, arguments: &[Value]) -> Result<Value, VmError> {
