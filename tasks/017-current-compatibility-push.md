@@ -1089,3 +1089,11 @@ Current pushed increments (2026-08-09):
   `TypeError` / `ERR_INVALID_ARG_TYPE`, and formats `{}` as `""`.
 - Stage 2614 and `test-buffer-isencoding.js` pass. Stage 2615 and
   `test-url-format-invalid-input.js` pass.
+
+## 2026-08-18 url.parse invalid input
+
+- `url.parse` rejects embedded NUL bytes with `ERR_INVALID_URL` and the
+  original `input` string, instead of an engine IPv6 EvalError.
+- Host `common.spawnPromisified` resolves with exit code 1 so spawn-based
+  invalid-URL assertions can complete without a child process.
+- Stage 2616 and upstream `test-url-parse-invalid-input.js` pass.

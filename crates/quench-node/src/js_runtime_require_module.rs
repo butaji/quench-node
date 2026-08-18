@@ -102,8 +102,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             capability_function(HostCapabilityKind::Custom(CapabilityName::V8Serialize));
         let deserialize =
             capability_function(HostCapabilityKind::Custom(CapabilityName::V8Deserialize));
-        let throw_snapshot =
-            capability_function(HostCapabilityKind::Custom(CapabilityName::V8StartupSnapshotThrows));
+        let throw_snapshot = capability_function(HostCapabilityKind::Custom(
+            CapabilityName::V8StartupSnapshotThrows,
+        ));
         let startup_snapshot = quench_runtime::host_api::object(vec![
             (
                 "isBuildingSnapshot".into(),
@@ -128,7 +129,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             ),
             (
                 "isStringOneByteRepresentation".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::V8IsStringOneByte)),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::V8IsStringOneByte,
+                )),
             ),
             (
                 "getHeapStatistics".into(),
@@ -156,7 +159,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             ),
             (
                 "writeHeapSnapshot".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::V8WriteHeapSnapshot)),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::V8WriteHeapSnapshot,
+                )),
             ),
             (
                 "queryObjects".into(),
@@ -316,10 +321,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("hasSQLite".into(), Value::Boolean(false)),
                 ("hasIPv6".into(), Value::Boolean(true)),
                 ("PORT".into(), Value::Number(0.0)),
-                ("getPort".into(),
-                    capability_function(HostCapabilityKind::Custom(
-                        CapabilityName::CommonGetPort,
-                    ))),
+                (
+                    "getPort".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::CommonGetPort)),
+                ),
                 (
                     "expectsError".into(),
                     capability_function(HostCapabilityKind::Custom(
@@ -339,14 +344,18 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("isFreeBSD".into(), Value::Boolean(false)),
                 ("isOpenBSD".into(), Value::Boolean(false)),
                 ("isSunOS".into(), Value::Boolean(false)),
-                ("noop".into(),
+                (
+                    "noop".into(),
                     capability_function(HostCapabilityKind::Custom(
                         CapabilityName::CommonMustNotCall,
-                    ))),
-                ("allowGlobals".into(),
+                    )),
+                ),
+                (
+                    "allowGlobals".into(),
                     capability_function(HostCapabilityKind::Custom(
                         CapabilityName::CommonMustNotCall,
-                    ))),
+                    )),
+                ),
                 (
                     "skip".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::CommonSkip)),
@@ -356,6 +365,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "mustNotMutateObjectDeep".into(),
                     capability_function(HostCapabilityKind::Custom(
                         CapabilityName::CommonMustNotMutateObjectDeep,
+                    )),
+                ),
+                (
+                    "spawnPromisified".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CommonSpawnPromisified,
                     )),
                 ),
             ]));

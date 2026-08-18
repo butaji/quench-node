@@ -71,6 +71,15 @@ fn legacy_path_parse(normalized: &str) -> Result<Value, VmError> {
     ]))
 }
 
+fn url_invalid_error(input: &str) -> Value {
+    quench_runtime::host_api::object(vec![
+        ("code".into(), Value::String("ERR_INVALID_URL".into())),
+        ("name".into(), Value::String("TypeError".into())),
+        ("message".into(), Value::String("Invalid URL".into())),
+        ("input".into(), Value::String(input.into())),
+    ])
+}
+
 fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(value)) = arguments.first().filter(|value| match value {
         Value::String(text) => !is_symbol_representation(text) && !text.starts_with("Symbol."),
@@ -94,8 +103,8 @@ fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
             ),
         ])));
     }
-    if value.contains("[127.0.0.1\\x00c8763]") {
-        return Err(VmError::Thrown(fs_error("ERR_INVALID_URL", value)));
+    if value.contains('\0') {
+        return Err(VmError::Thrown(url_invalid_error(value)));
     }
     if value == "https://evil.com:.example.com" || value == "git+ssh://git@github.com:npm/npm" {
         return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_VALUE", value)));

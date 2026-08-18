@@ -415,6 +415,7 @@ impl CapabilityName {
     const CommonExpectsError: u16 = 1707;
     const CommonExpectsErrorCheck: u16 = 1708;
     const CommonPlatformTimeout: u16 = 1709;
+    const CommonSpawnPromisified: u16 = 1724;
     const CommonGetPort: u16 = 1710;
     const V8HeapStats: u16 = 1711;
     const V8HeapCodeStats: u16 = 1716;
