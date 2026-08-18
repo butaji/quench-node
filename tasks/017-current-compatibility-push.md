@@ -1051,3 +1051,9 @@ Current pushed increments (2026-08-09):
   with Node-shaped `Received …` suffixes.
 - `common.invalidArgTypeHelper` no longer stringifies every value as a string.
 - Focused stage 2608 and upstream `test-path-parse-format.js` pass.
+
+## 2026-08-17 assert.match regex compilation
+
+- `assert.match` / `doesNotMatch` now compile the RegExp source when the
+  engine's `test()` property is not usable from the host.
+- Stage 2609 and upstream `test-path-posix-relative-on-windows.js` pass.

@@ -10,10 +10,12 @@ fn regex_matches(pattern: &Value, string: &str) -> bool {
         return regex_source_matches(pattern, string);
     };
     if is_callable_value(&test) {
-        return matches!(
+        if matches!(
             quench_runtime::execute::call(&test, pattern, &[Value::String(string.into())]),
             Ok(Value::Boolean(true))
-        );
+        ) {
+            return true;
+        }
     }
     regex_source_matches(pattern, string)
 }
@@ -21,11 +23,18 @@ fn regex_matches(pattern: &Value, string: &str) -> bool {
 fn regex_source_matches(pattern: &Value, string: &str) -> bool {
     let Some(source) = assert_string_value(pattern, "source") else {
         if let Value::String(source) = pattern {
-            return string.contains(source.as_str());
+            return rust_regex_is_match(source, string) || string.contains(source.as_str());
         }
         return false;
     };
-    string.contains(source.as_str())
+    rust_regex_is_match(&source, string)
+}
+
+fn rust_regex_is_match(source: &str, string: &str) -> bool {
+    let source = source.replace(r"\/", "/");
+    regex::Regex::new(&source)
+        .map(|pattern| pattern.is_match(string))
+        .unwrap_or(false)
 }
 
 /// `assert.throws(fn, expected)`: constructor, validator, RegExp, or object.
