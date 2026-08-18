@@ -403,7 +403,7 @@ fn win32_normalize(input: &str) -> String {
                     is_absolute = true;
                     root_end = 3;
                 }
-            } else if is_windows_reserved_name(input, colon_index) {
+            } else if colon_index < len && is_windows_reserved_name(input, colon_index) {
                 device = Some(input[..=colon_index].to_string());
                 root_end = colon_index + 1;
             }
@@ -445,8 +445,12 @@ fn win32_normalize(input: &str) -> String {
         }
     }
 
-    let colon_index = input.find(':').unwrap_or(len);
-    if is_windows_reserved_name(input, colon_index) {
+    let device_bound = input.find(':').unwrap_or_else(|| {
+        // Node: StringPrototypeSlice(path, 0, -1) drops the final character when
+        // no colon is present; e.g. "COM9." resolves its device part to "COM9".
+        input.char_indices().next_back().map(|(i, _)| i).unwrap_or(0)
+    });
+    if device_bound < len && is_windows_reserved_name(input, device_bound) {
         return format!(".\\{}{tail}", device.as_deref().unwrap_or(""));
     }
     match device {
