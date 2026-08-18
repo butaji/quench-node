@@ -1072,3 +1072,12 @@ Current pushed increments (2026-08-09):
 
 - `%j` now JSON-stringifies objects, arrays, and primitives.
 - Stage 2611 covers the specifier.
+
+## 2026-08-18 strict fixtures, os.EOL, querystring.escape
+
+- Reduced-engine scripts now start with `'use strict'`, so read-only
+  assignments throw TypeError the way Node fixtures expect.
+- Template `ToString` keeps `StringUnits`, so lone-surrogate concatenation
+  survives into `querystring.escape`.
+- Stage 2612 and `test-os-eol.js` pass. Stage 2613 and
+  `test-querystring-escape.js` pass.
